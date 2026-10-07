@@ -1,0 +1,6 @@
+node_modules/
+cli/dist/
+# written by Claude Code when the plugin loads from a dev folder
+.claude-plugin/types/
+.nanoflow/
+.worktree.json

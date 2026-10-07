@@ -1,0 +1,15 @@
+{
+  "name": "nanoflow",
+  "description": "nanoflow by nanosite.ai: a Claude Code plugin that keeps ticket → worktree → PR → CI → teardown connected and live.",
+  "owner": {
+    "name": "nanosite.ai",
+    "url": "https://nanosite.ai"
+  },
+  "plugins": [
+    {
+      "name": "nanoflow",
+      "source": "./",
+      "description": "By nanosite.ai. Live dev-workflow dashboard: worktrees on their own ports, tickets, PRs/CI, toasts, a progress status line and dev skills."
+    }
+  ]
+}

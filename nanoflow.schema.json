@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/nanosite-ai/nanoflow/main/nanoflow.schema.json",
+  "title": "nanoflow config (.claude/nanoflow.json)",
+  "description": "nanoflow by nanosite.ai: one file for the Claude Code plugin and the CLI. Every field is optional. Reference: https://github.com/nanosite-ai/nanoflow/blob/main/docs/config.md",
+  "type": "object",
+  "properties": {
+    "$schema": { "type": "string" },
+    "mainBranch": { "type": "string", "default": "main" },
+    "github": {
+      "type": "object",
+      "properties": {
+        "repo": { "type": "string", "pattern": "^[^/]+/[^/]+$", "description": "owner/name (default: from the origin remote)" },
+        "board": {
+          "type": "object",
+          "required": ["owner", "number"],
+          "properties": {
+            "owner": { "type": "string", "description": "Project owner (org or user login)" },
+            "number": { "type": "integer", "description": "Project number from its URL" },
+            "statuses": {
+              "type": "object",
+              "description": "Your Status column names per lifecycle step",
+              "properties": {
+                "backlog": { "type": "string" }, "ready": { "type": "string" }, "in-progress": { "type": "string" },
+                "in-review": { "type": "string" }, "done": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    },
+    "ticket": {
+      "type": "object",
+      "properties": {
+        "branchPattern": { "type": "string", "description": "Regex; first group = ticket number", "default": "(?:^|/)(\\d+)-" },
+        "urlTemplate": { "type": "string", "description": "e.g. https://acme.atlassian.net/browse/APP-{ticket}" },
+        "github": { "type": "boolean", "default": true, "description": "Plugin: read titles/PRs with gh" },
+        "types": { "type": "array", "items": { "type": "string" } },
+        "labels": { "type": "object", "properties": { "type": { "type": "string" }, "area": { "type": "string" } } },
+        "sections": {
+          "type": "object",
+          "properties": { "ticket": { "type": "array", "items": { "type": "string" } }, "bug": { "type": "array", "items": { "type": "string" } } }
+        }
+      }
+    },
+    "slot": {
+      "type": "object",
+      "properties": { "file": { "type": "string" }, "key": { "type": "string" }, "mainSlot": { "type": "integer" } }
+    },
+    "host": { "type": "string", "default": "localhost" },
+    "services": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "base": { "type": "integer", "description": "Port in the main checkout; port = base + slot * step" },
+          "step": { "type": "integer", "default": 10 },
+          "path": { "type": "string", "default": "/", "description": "Health path" },
+          "open": { "type": "boolean", "description": "The service 'Open app' links to" },
+          "start": {
+            "type": "object",
+            "required": ["run"],
+            "properties": { "run": { "type": "string" }, "cwd": { "type": "string" } }
+          },
+          "optional": { "type": "boolean", "description": "Only started with nf up --with <name>" },
+          "ready": { "type": "boolean", "description": "nf up waits for it (default: when it has a port)" }
+        }
+      }
+    },
+    "env": {
+      "type": "object",
+      "properties": {
+        "export": { "$ref": "#/$defs/stringMap" },
+        "worktree": { "$ref": "#/$defs/stringMap" },
+        "files": { "type": "object", "additionalProperties": { "$ref": "#/$defs/stringMap" } }
+      }
+    },
+    "worktree": {
+      "type": "object",
+      "properties": {
+        "dir": { "type": "string", "default": "../{repo}-{feature}" },
+        "branch": { "type": "string", "default": "feat/{feature}" },
+        "copy": { "type": "array", "items": { "type": "string" } },
+        "install": { "type": ["string", "null"] }
+      }
+    },
+    "stack": {
+      "type": "object",
+      "properties": {
+        "stateDir": { "type": "string" },
+        "before": { "type": "array", "items": { "type": "string" } },
+        "timeoutSeconds": { "type": "number" }
+      }
+    },
+    "checks": { "$ref": "#/$defs/stringMap" },
+    "pr": {
+      "type": "object",
+      "properties": { "conventional": { "type": "boolean" }, "shotsBranch": { "type": "string" } }
+    },
+    "title": {
+      "type": "object",
+      "properties": { "enabled": { "type": "boolean" }, "format": { "type": "string" } }
+    },
+    "teardown": { "type": "object", "properties": { "checklist": { "type": "array", "items": { "type": "string" } } } },
+    "provider": {
+      "type": "object",
+      "required": ["snapshot"],
+      "properties": { "snapshot": { "$ref": "#/$defs/argv" }, "local": { "$ref": "#/$defs/argv" } }
+    },
+    "poll": {
+      "type": "object",
+      "properties": {
+        "localSeconds": { "type": "number", "minimum": 5 },
+        "githubSeconds": { "type": "number", "minimum": 60 }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["match"],
+        "properties": {
+          "match": { "type": "string", "description": "Regex tested against each Bash command" },
+          "label": { "type": "string" },
+          "kind": { "enum": ["test", "e2e", "check", "git", "github", "task", "ship", "other"] },
+          "toast": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "object", "properties": { "start": { "type": "string" }, "ok": { "type": "string" }, "fail": { "type": "string" } } }
+            ]
+          },
+          "rescan": { "enum": ["local", "full"] },
+          "important": { "type": "boolean" }
+        }
+      }
+    },
+    "actions": {
+      "type": "object",
+      "propertyNames": { "enum": ["startDev", "stopDev", "teardown", "startTask", "newTicket"] },
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "null" },
+          {
+            "type": "object",
+            "properties": {
+              "label": { "type": "string" },
+              "run": { "$ref": "#/$defs/argv" },
+              "prompt": { "type": "string" },
+              "cwd": { "enum": ["worktree", "main"] },
+              "confirm": { "type": "boolean" }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "stringMap": { "type": "object", "additionalProperties": { "type": "string" } },
+    "argv": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+  }
+}

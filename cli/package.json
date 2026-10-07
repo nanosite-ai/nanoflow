@@ -1,0 +1,34 @@
+{
+  "name": "@nanosite/nanoflow",
+  "version": "0.1.0",
+  "description": "nanoflow by nanosite.ai: one deterministic command per dev ritual (ticket → worktree on its own ports → PR → CI → teardown). Built for coding agents: --json, --dry, never blocks on a prompt.",
+  "type": "module",
+  "license": "MIT",
+  "author": "nanosite.ai (https://nanosite.ai)",
+  "homepage": "https://github.com/nanosite-ai/nanoflow#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/nanosite-ai/nanoflow.git", "directory": "cli" },
+  "bugs": "https://github.com/nanosite-ai/nanoflow/issues",
+  "keywords": ["claude-code", "git-worktree", "worktrees", "agents", "github", "developer-workflow", "cli"],
+  "bin": {
+    "nanoflow": "./bin/nanoflow.mjs",
+    "nf": "./bin/nanoflow.mjs"
+  },
+  "files": ["bin", "dist"],
+  "engines": { "node": ">=20.12" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "tsc": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "docs": "node bin/nanoflow.mjs docs --write",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.7.2",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.8"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "ES2022",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "declaration": false,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["./src/**/*.mts"],
+  "exclude": ["node_modules", "dist", "./src/**/*.test.mts"]
+}
