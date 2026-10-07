@@ -6,15 +6,32 @@
   "license": "MIT",
   "author": "nanosite.ai (https://nanosite.ai)",
   "homepage": "https://github.com/nanosite-ai/nanoflow#readme",
-  "repository": { "type": "git", "url": "git+https://github.com/nanosite-ai/nanoflow.git", "directory": "cli" },
-  "bugs": "https://github.com/nanosite-ai/nanoflow/issues",
-  "keywords": ["claude-code", "git-worktree", "worktrees", "agents", "github", "developer-workflow", "cli"],
-  "bin": {
-    "nanoflow": "./bin/nanoflow.mjs",
-    "nf": "./bin/nanoflow.mjs"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nanosite-ai/nanoflow.git",
+    "directory": "cli"
   },
-  "files": ["bin", "dist"],
-  "engines": { "node": ">=20.12" },
+  "bugs": "https://github.com/nanosite-ai/nanoflow/issues",
+  "keywords": [
+    "claude-code",
+    "git-worktree",
+    "worktrees",
+    "agents",
+    "github",
+    "developer-workflow",
+    "cli"
+  ],
+  "bin": {
+    "nanoflow": "bin/nanoflow.mjs",
+    "nf": "bin/nanoflow.mjs"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20.12"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "tsc": "tsc -p tsconfig.json --noEmit",
