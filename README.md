@@ -4,7 +4,7 @@
 
 **Never lose yourself in ten worktrees.**
 
-<sub>by <a href="https://nanosite.ai"><b>nanosite.ai</b></a>, the team building an AI operator for ecommerce, who run their whole monorepo this way</sub>
+<sub>by <a href="https://nanosite.ai"><b>nanosite.ai</b></a></sub>
 
 Run many tasks at once with Claude Code, each in its own git worktree on its own ports, and see all of
 them at a glance: which ticket, which branch, which PR, whether CI is red, what's running, what's ready to
@@ -35,22 +35,7 @@ Claude Code, and turns every ritual into one deterministic command.
 
 `/nanoflow` opens a pane next to your session:
 
-```
- 🌳 Worktrees   🎫 Tickets   ⚡ Activity   🔄 Refresh          updated 4s ago · nanoflow flow --json
-
- 🌳 8 worktrees   🚀 2 running   🔀 4 open PRs   ❌ 1 red CI   🧹 1 ready to tear down
-
- ╭──────────────────────────────────────────────────────────────────────────────────────╮
- │  📍 THIS SESSION  ▸ 🚀 app-712-site-offline  🎫 #712  Sites go offline without a plan  │
- │    ⎇ feat/712-site-offline  slot 3  ✎ 2 changed  ↑ 3 ahead  🟢 PR #713 open  ❌ CI     │
- │    ✓ticket ✓branch ✓code ✓checks ✓PR #713 ✗CI ○merged                                │
- │    ● web :5203   ● api :3031   ○ worker                                               │
- │    📂 C:/dev/app-712-site-offline                                                     │
- ╰──────────────────────────────────────────────────────────────────────────────────────╯
-   ▸ 🏠 app   main  slot 0   ○ web :5173   ○ api :3001
-   ▸ 🌿 app-702-promo-name  🎫 #702  Promo landing shows the name only   In review
-     ⎇ feat/702-promo-name  slot 6  🟣 PR #703 merged  ✅ CI
-```
+<p align="center"><img src="docs/media/dashboard.jpeg" alt="The nanoflow pane in Claude Code: eight worktrees, each with its branch, slot, ports, progress stages and folder link; the session's own worktree framed and badged THIS SESSION" width="560"></p>
 
 - **Your session's worktree is framed and badged**, so you always know where *this* agent is.
 - **Everything is a link**: the ticket, the PR, the failing CI run, each running service, the worktree folder.
