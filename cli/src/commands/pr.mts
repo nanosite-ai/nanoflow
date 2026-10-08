@@ -7,7 +7,7 @@ import { gh, ghRepo, prField, prForBranch, PR_STATE, repoSlug, setPrBody } from 
 import { commitsSinceMain, fetchMain } from "../lib/git.mjs";
 import { dryRun, parseIssueNumber, tempFile } from "../lib/globals.mjs";
 import { c, info, result, success, warn } from "../lib/output.mjs";
-import { run, tail, tryRun } from "../lib/proc.mjs";
+import { run, runAnyExit, tail, tryRun } from "../lib/proc.mjs";
 import { requireRepo, type RepoContext } from "../lib/repo.mjs";
 import { attachShotsToBody, shotRepoPath, shotsFolder, uploadShots } from "../lib/shots.mjs";
 import { advanceTask, currentTask } from "../lib/task.mjs";
@@ -175,9 +175,9 @@ interface Check {
 const POLL_MS = 15_000;
 
 const prChecks = (repo: RepoContext, pr: number): Check[] => {
-  // `gh pr checks` exits non-zero while checks are pending or failing, but still prints the JSON.
-  const raw = tryRun("gh", ["pr", "checks", String(pr), "--repo", repoSlug(repo), "--json", "name,workflow,state,bucket,link"]);
-  if (raw !== null) return JSON.parse(raw || "[]") as Check[];
+  // `gh pr checks` exits 1 when a check failed and 8 while some are pending, and still prints the JSON.
+  const { stdout } = runAnyExit("gh", ["pr", "checks", String(pr), "--repo", repoSlug(repo), "--json", "name,workflow,state,bucket,link"]);
+  if (stdout.startsWith("[")) return JSON.parse(stdout) as Check[];
   if (ghRepo(repo, ["pr", "view", String(pr), "--json", "statusCheckRollup", "--jq", ".statusCheckRollup | length"]) === "0") return [];
   throw new Error(`Could not read checks for PR #${pr}.`);
 };
