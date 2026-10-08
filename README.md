@@ -2,7 +2,7 @@
 
 # 🌳 nanoflow
 
-**Never lose yourself in ten worktrees.**
+**Run Claude Code tasks in parallel without losing track.**
 
 <sub>by <a href="https://nanosite.ai"><b>nanosite.ai</b></a></sub>
 
