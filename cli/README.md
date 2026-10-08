@@ -1,6 +1,6 @@
 # @nanosite/nanoflow
 
-**Never lose yourself in ten worktrees.** The nanoflow CLI, by [nanosite.ai](https://nanosite.ai).
+**Run Claude Code tasks in parallel without losing track.** The nanoflow CLI, by [nanosite.ai](https://nanosite.ai).
 
 One deterministic command per dev ritual: ticket → git worktree on its own ports → checks → PR → CI →
 teardown. Built for coding agents: `--json` on everything, `--dry` before any write, never blocks on a prompt.
