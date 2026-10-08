@@ -17,8 +17,8 @@ interface StartOpts extends NewTicketOpts {
   install?: boolean;
 }
 
-/** 2–4 lowercase words for the session/terminal title. */
-const shortTitleOf = (title: string): string => slugify(title, 4).replace(/-/g, " ");
+/** 2–3 lowercase words for the session/terminal title. */
+const shortTitleOf = (title: string): string => slugify(title, 3).replace(/-/g, " ");
 
 /** Create or claim the issue and set it In progress. */
 const claimIssue = (repo: RepoContext, issueArg: string | undefined, opts: StartOpts): { number: number; title: string } => {

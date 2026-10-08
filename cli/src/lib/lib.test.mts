@@ -57,6 +57,11 @@ describe("slots", () => {
 
   test("names", () => {
     expect(slugify("Lease expires mid-post!")).toBe("lease-expires-mid-post");
+    expect(slugify("Dark mode for the storefront")).toBe("dark-mode-storefront");
+    expect(slugify("Cart total rounds to the wrong cent")).toBe("cart-total-rounds-wrong");
+    expect(slugify("The end", 3)).toBe("end");
+    expect(slugify("To be or not")).toBe("not");
+    expect(slugify("of the")).toBe("of-the");
     expect(ticketOf(config, "feat/712-site-offline")).toBe(712);
     expect(ticketOf(config, "main", "repo-ads")).toBe(null);
   });
