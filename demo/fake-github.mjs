@@ -18,7 +18,7 @@ const save = () => writeFileSync(STATE_FILE, `${JSON.stringify(state, null, 2)}\
 const OWNER = state.repo.split("/")[0];
 const BOARD = 1;
 /** New CI runs stay pending this long, then go green (unless a PR is set to fail). */
-const CI_SECONDS = Number(process.env.FAKE_GITHUB_CI_SECONDS ?? 25);
+const CI_SECONDS = Number(process.env.FAKE_GITHUB_CI_SECONDS ?? 8);
 const COLUMNS = ["Backlog", "Ready", "In progress", "In review", "Done"];
 const optionId = (name) => `opt-${name.toLowerCase().replace(/\s+/g, "-")}`;
 

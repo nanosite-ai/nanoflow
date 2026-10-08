@@ -6,7 +6,7 @@
 //   node demo/setup.mjs [--dir C:\demo] [--force] [--no-servers]
 //   node demo/launch.mjs [--dir C:\demo]            → Claude Code inside it, nanoflow loaded
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { demoEnv, DEMO, nanoflowBin, parseDir } from "./common.mjs";
@@ -37,12 +37,12 @@ const commit = (cwd, message, files) => {
 
 if (existsSync(DIR)) {
   if (!argv.includes("--force")) throw new Error(`${DIR} exists. Re-run with --force to rebuild it (stops its dev servers and deletes it).`);
-  if (existsSync(SHOP)) nf(SHOP, "kill", "--yes");
-  for (const wt of DEMO.worktrees) {
-    const dir = path.join(DIR, `${DEMO.repoDir}-${wt.feature}`);
-    if (existsSync(dir)) spawnSync(process.execPath, [nanoflowBin(), "kill"], { cwd: dir, env });
+  // Stop the dev servers of every checkout, the ones made on camera included, so no file stays locked.
+  // Best-effort: a half-deleted demo is no repo any more.
+  for (const name of readdirSync(DIR).filter((n) => n === DEMO.repoDir || n.startsWith(`${DEMO.repoDir}-`))) {
+    spawnSync(process.execPath, [nanoflowBin(), "kill"], { cwd: path.join(DIR, name), env });
   }
-  rmSync(DIR, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 });
+  rmSync(DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
 }
 mkdirSync(DIR, { recursive: true });
 console.log(`▶ building the demo in ${DIR}`);
@@ -111,8 +111,19 @@ commit(SHOP, "chore: acme shop", {
   "src/orders.ts": "export interface Order {\n  id: string;\n  total: number;\n}\n",
   ".claude/nanoflow.json": `${JSON.stringify(config, null, 2)}\n`,
   // Recording shouldn't stop for permission prompts on the demo's own commands.
-  ".claude/settings.json": `${JSON.stringify({ permissions: { allow: ["nf", "nanoflow", "git"].flatMap((cmd) => [`Bash(${cmd}:*)`, `PowerShell(${cmd}:*)`]) } }, null, 2)}\n`,
+  ".claude/settings.json": `${JSON.stringify({ permissions: { allow: [...["nf", "nanoflow", "git"].flatMap((cmd) => [`Bash(${cmd}:*)`, `PowerShell(${cmd}:*)`]), "Edit", "Write"] } }, null, 2)}\n`,
   ".gitignore": "node_modules/\n",
+  // So natural prompts ("pick up the dark mode ticket") map to nanoflow, as in a real repo that uses it.
+  "CLAUDE.md": [
+    "# Acme Shop",
+    "",
+    "We work ticket-first with the nanoflow CLI (`nf`). Use it for every step, and keep replies to one short line.",
+    "",
+    "- Find a ticket: `nf board list ready`. Pick it up: `nf task start <n>` (it creates the worktree), then work inside that worktree.",
+    "- Before a PR: commit, then `nf check`.",
+    "- Open the PR: `nf pr create`, then `nf ci --watch`.",
+    "",
+  ].join("\n"),
 });
 git(SHOP, "remote", "add", "origin", ORIGIN);
 git(SHOP, "push", "-q", "-u", "origin", "main");

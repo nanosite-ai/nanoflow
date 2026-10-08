@@ -31,48 +31,22 @@ pick up on camera.
 
 ## Before you hit record
 
-- **Your account.** Claude Code's header shows who's logged in. Crop the top line, or record with a
-  separate login: `CLAUDE_CONFIG_DIR=C:\demo\.claude-home node demo/launch.mjs`, then log in to a demo account.
-- **Your terminal.** Use a fresh profile with no custom prompt (the demo's own paths are neutral already).
-  Make it at least 144 columns wide so the pane docks next to the chat.
-- **Timing.** New CI runs stay pending for 25 seconds. Set `FAKE_GITHUB_CI_SECONDS=8` before
-  `launch.mjs` for snappier takes.
+- Crop Claude Code's top line: it shows who's logged in.
+- Make the terminal at least 144 columns wide, so the pane sits beside the chat.
+- Open a second terminal in this folder, for the merge.
 
-## Shot list
+## Shot list (15–20 s after editing)
 
-Type the prompts in the Claude Code session. Each one fires real nanoflow toasts and moves the pane.
+Record each beat, then cut the waiting. In Claude Code, type only the quoted text.
 
-1. **The overview.** Hold on the pane: five worktrees, each with its ticket, board column, PR, CI and ports;
-   🚀 on the running ones; the 🧹 ready-to-tear-down count. Switch to the 🎫 Tickets tab and back.
-2. **Pick up a ticket.**
-   > Start ticket 21 with nf task start 21
+| | You do | On screen |
+|---|---|---|
+| 1 | Nothing. Hold on the pane for 2 s | Five worktrees with their tickets, PRs, CI and ports |
+| 2 | Type **"pick up the dark mode ticket"** | A toast; a new card framed **📍 THIS SESSION**; the tab renamed to the ticket |
+| 3 | Type **"add a dark theme and open a PR"** | Checks green, "PR opened", the card's CI 🟡 then ✅ |
+| 4 | In the second terminal: `node demo/director.mjs merge 24`. Then press 🔄 Refresh, then **Teardown** on the card | PR merged, ticket Done, the card goes away |
 
-   A toast, a new card on slot 5, #21 moves to In progress, and the terminal tab and session are renamed
-   `#21 · feat/21-dark-mode-storefront · dark mode storefront`. The card is framed: **📍 THIS SESSION**.
-3. **Build and run it.**
-   > Add a dark.css with a dark color scheme, commit it, then nf up --bg
-
-   The commit shows on the card (↑1), the dev servers come up with their links (web :4150).
-4. **Checks.**
-   > nf check
-
-   Three green lines, one toast.
-5. **Open the PR.**
-   > nf pr create, then nf ci --watch
-
-   Toast "PR opened", #21 moves to In review, the card shows PR #24 with 🟡 CI, then ✅ and a "CI green" toast.
-6. **Red CI, explained.** *(optional)*
-   > Why is CI red on PR 19? nf ci 19 --failed-log
-
-   The failing Playwright step, in a few lines.
-7. **Merge and tear down.** From a second terminal:
-
-   ```bash
-   node demo/director.mjs merge 24
-   ```
-
-   Press 🔄 Refresh in the pane: PR merged, #21 to Done, the 🧹 nudge. Then press **Teardown** on the card
-   (or `nf wt remove 21-dark-mode-storefront --delete-branch`) and the card goes away.
+Re-take: `node demo/setup.mjs --force`.
 
 ## Directing
 
@@ -81,7 +55,7 @@ on its next GitHub poll (every 60 s in the demo), or immediately when you press 
 
 | Command | Effect |
 |---|---|
-| `ci <pr> pass\|fail\|auto` | set a PR's CI (`auto` = pending, then green) |
+| `ci <pr> pass\|fail\|auto` | set a PR's CI (`auto` = pending for 8 s, then green; `FAKE_GITHUB_CI_SECONDS` changes it) |
 | `merge <pr>` | merge it; its ticket closes and moves to Done |
 | `status <issue> "<column>"` | move a ticket: Backlog, Ready, In progress, In review, Done |
 | `ticket "<title>"` | add a Ready ticket |
