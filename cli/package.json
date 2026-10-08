@@ -1,6 +1,6 @@
 {
   "name": "@nanosite/nanoflow",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "nanoflow by nanosite.ai: one deterministic command per dev ritual (ticket → worktree on its own ports → PR → CI → teardown). Built for coding agents: --json, --dry, never blocks on a prompt.",
   "type": "module",
   "license": "MIT",
