@@ -1,5 +1,5 @@
 // init, doctor, docs: getting a repo onto nanoflow and keeping the reference current.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
@@ -38,29 +38,47 @@ const checksFrom = (scripts: Record<string, string>, runner: string): Record<str
 const runnerOf = (root: string): string =>
   existsSync(path.join(root, "pnpm-lock.yaml")) ? "pnpm" : existsSync(path.join(root, "yarn.lock")) ? "yarn" : existsSync(path.join(root, "bun.lockb")) ? "bun" : "npm";
 
+/** The folder whose package.json holds the scripts: the root, else the one first-level folder that has one. */
+const packageDirOf = (root: string): string | null => {
+  if (existsSync(path.join(root, "package.json"))) return "";
+  const subs = readdirSync(root, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && !d.name.startsWith(".") && d.name !== "node_modules" && existsSync(path.join(root, d.name, "package.json")))
+    .map((d) => d.name);
+  return subs.length === 1 ? subs[0] : null;
+};
+
+/** `cd cli && npm run tsc` for a package in a subfolder (works in sh and cmd.exe alike). */
+const inDir = (dir: string, command: string): string => (dir ? `cd ${dir} && ${command}` : command);
+
 export const starterConfig = (repo: RepoContext, opts: { board?: string }): Record<string, unknown> => {
   const root = repo.mainRoot;
-  const pkg = readJson(path.join(root, "package.json"));
+  const pkgDir = packageDirOf(root);
+  const pkgRoot = path.join(root, pkgDir ?? "");
+  const pkg = pkgDir === null ? {} : readJson(path.join(pkgRoot, "package.json"));
   const scripts = (pkg.scripts ?? {}) as Record<string, string>;
-  const runner = runnerOf(root);
+  const runner = runnerOf(pkgRoot);
   const main = (tryRun("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { cwd: root }) ?? "origin/main").replace(/^origin\//, "");
   const devScript = ["dev", "start"].find((s) => scripts[s]);
   const [owner, num] = (opts.board ?? "").split("/");
+  // Only an app with a dev/start script gets a service; a library or CLI repo has nothing to run.
+  const app = devScript
+    ? { services: [{ name: "app", base: 3000, step: 10, path: "/", open: true, start: { run: inDir(pkgDir ?? "", `${runner} run ${devScript}`) } }], env: { export: { PORT: "{port:app}" } } }
+    : { services: [] };
+  const checks = Object.fromEntries(Object.entries(checksFrom(scripts, runner)).map(([k, v]) => [k, inDir(pkgDir ?? "", v)]));
   return {
     $schema: SCHEMA_URL,
     mainBranch: main,
     provider: { snapshot: ["nanoflow", "flow", "--json"], local: ["nanoflow", "flow", "--json", "--local"] },
     github: opts.board && owner && Number(num) ? { board: { owner, number: Number(num) } } : {},
-    services: [{ name: "app", base: 3000, step: 10, path: "/", open: true, ...(devScript ? { start: { run: `${runner} run ${devScript}` } } : {}) }],
-    env: { export: { PORT: "{port:app}" } },
+    ...app,
     worktree: {
       copy: [".env", ".env.local"].filter((f) => existsSync(path.join(root, f))),
-      install: existsSync(path.join(root, "package.json")) ? `${runner} install` : null,
+      install: pkgDir === null ? null : inDir(pkgDir, `${runner} install`),
     },
-    checks: checksFrom(scripts, runner),
+    checks,
     actions: {
-      startDev: { label: "Start dev", run: ["nanoflow", "up", "--bg"] },
-      stopDev: { label: "Stop", run: ["nanoflow", "kill"], confirm: true },
+      startDev: devScript ? { label: "Start dev", run: ["nanoflow", "up", "--bg"] } : null,
+      stopDev: devScript ? { label: "Stop", run: ["nanoflow", "kill"], confirm: true } : null,
       teardown: { label: "Teardown", run: ["nanoflow", "wt", "remove", "{feature}", "--delete-branch", "--yes"], cwd: "main", confirm: true },
       startTask: { label: "Start", prompt: "Start ticket #{ticket} ({title}) with `nanoflow task start {ticket}`, then read the ticket and plan the work." },
       newTicket: { label: "Create", run: ["nanoflow", "ticket", "new", "{title}"], cwd: "main" },
@@ -144,7 +162,8 @@ export const registerSetup = (program: Command): void => {
           const id = tryRun("gh", ["project", "view", String(b.number), "--owner", b.owner, "--format", "json", "--jq", ".id"]);
           add("board", Boolean(id), id ? `${b.owner}/${b.number}` : `cannot read project ${b.owner}/${b.number} (gh auth refresh -s project)`);
         } else add("board", true, "none configured (optional)");
-        add("services", repo.config.services.length > 0, repo.config.services.map((s) => s.name).join(", ") || "none: add services to get ports and nf up");
+        // Services are optional: a library or CLI repo has nothing to run.
+        add("services", true, repo.config.services.map((s) => s.name).join(", ") || "none (optional: add services for per-worktree ports and nf up)");
       }
       const bad = checks.filter((x) => !x.ok);
       result({ ok: !bad.length, checks }, () => {
@@ -159,7 +178,7 @@ export const registerSetup = (program: Command): void => {
 const DOC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "docs", "cli.md");
 const HELP_WIDTH = 100;
 
-const helpOf = (cmd: Command): string => {
+export const helpOf = (cmd: Command): string => {
   let out = "";
   cmd.configureOutput({ writeOut: (s) => (out += s), getOutHelpWidth: () => HELP_WIDTH, getOutHasColors: () => false });
   cmd.outputHelp();

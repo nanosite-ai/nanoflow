@@ -5,7 +5,8 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFi
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { FlowConfig, ServiceSpec } from "./config.mjs";
-import { killTree } from "./kill.mjs";
+import { killTree, waitForExit } from "./kill.mjs";
+import { IS_WIN } from "./proc.mjs";
 import { portOf } from "./worktree.mjs";
 
 /** The services `up` starts: those with a start command, minus optional ones not named in `with`. */
@@ -17,7 +18,10 @@ export const logFile = (config: FlowConfig, checkoutRoot: string, name: string):
 const stateFile = (config: FlowConfig, checkoutRoot: string): string => path.join(stateDir(config, checkoutRoot), "stack.json");
 
 export interface StackState {
+  /** The --bg supervisor. */
   pid: number;
+  /** The services it started, so a stop reaches them even if the supervisor can't relay it. */
+  children?: number[];
   apps: string[];
   startedAt: string;
 }
@@ -42,7 +46,11 @@ export const isAlive = (pid: number): boolean => {
 export const stopRecordedStack = (config: FlowConfig, checkoutRoot: string): number[] => {
   const state = readStackState(config, checkoutRoot);
   rmSync(stateFile(config, checkoutRoot), { force: true });
-  return state && isAlive(state.pid) ? killTree([state.pid]) : [];
+  if (!state) return [];
+  const pids = [state.pid, ...(state.children ?? [])].filter(isAlive);
+  const killed = killTree(pids);
+  waitForExit(pids);
+  return killed;
 };
 
 /** Any HTTP answer (even 401/404) means the service is listening. */
@@ -96,14 +104,22 @@ export const superviseStack = (args: { config: FlowConfig; checkoutRoot: string;
     setTimeout(() => process.exit(code), 300);
   };
 
-  if (args.logToFiles) {
-    mkdirSync(path.join(stateDir(config, checkoutRoot), "logs"), { recursive: true });
-    writeFileSync(stateFile(config, checkoutRoot), JSON.stringify({ pid: process.pid, apps: args.services.map((s) => s.name), startedAt: new Date().toISOString() } satisfies StackState));
-  }
+  const recordState = (): void => {
+    if (!args.logToFiles) return;
+    const state: StackState = {
+      pid: process.pid,
+      children: children.flatMap((ch) => (ch.pid ? [ch.pid] : [])),
+      apps: args.services.map((s) => s.name),
+      startedAt: new Date().toISOString(),
+    };
+    writeFileSync(stateFile(config, checkoutRoot), JSON.stringify(state));
+  };
+  if (args.logToFiles) mkdirSync(path.join(stateDir(config, checkoutRoot), "logs"), { recursive: true });
 
   args.services.forEach((svc, i) => {
     const start = svc.start!;
-    const child = spawn(start.run, { cwd: path.join(checkoutRoot, start.cwd ?? "."), env: { ...process.env, ...args.env }, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+    // Unix: each service leads its own process group, so stopping it also stops what its shell started.
+    const child = spawn(start.run, { cwd: path.join(checkoutRoot, start.cwd ?? "."), env: { ...process.env, ...args.env }, shell: true, stdio: ["ignore", "pipe", "pipe"], detached: !IS_WIN });
     children.push(child);
     if (args.logToFiles) {
       const out = createWriteStream(logFile(config, checkoutRoot, svc.name), { flags: "w" });
@@ -127,6 +143,7 @@ export const superviseStack = (args: { config: FlowConfig; checkoutRoot: string;
     });
   });
 
+  recordState();
   process.on("SIGINT", () => shutdown(0));
   process.on("SIGTERM", () => shutdown(0));
 };

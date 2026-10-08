@@ -20,8 +20,14 @@ const needsShell = (cmd: string): boolean => IS_WIN && SHIMS.has(cmd);
 /** cmd.exe quoting, so a shell call is one command string (args + shell:true is deprecated, DEP0190). */
 export const quoteForCmd = (arg: string): string => (/^[\w./:=@-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '\\"')}"`);
 
-const prepare = (cmd: string, args: string[]): [string, string[]] =>
-  needsShell(cmd) ? [[cmd, ...args].map(quoteForCmd).join(" "), []] : [cmd, args];
+/** NANOFLOW_GH=<script.mjs> stands in for gh (run with node): the e2e tests' fake, or a wrapper of your own. */
+const ghOverride = (): string | undefined => process.env.NANOFLOW_GH || undefined;
+
+const prepare = (cmd: string, args: string[]): [string, string[]] => {
+  const fakeGh = cmd === "gh" ? ghOverride() : undefined;
+  if (fakeGh) return [process.execPath, [fakeGh, ...args]];
+  return needsShell(cmd) ? [[cmd, ...args].map(quoteForCmd).join(" "), []] : [cmd, args];
+};
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
@@ -61,6 +67,13 @@ export const tryRunAsync = (cmd: string, args: string[], opts: { cwd?: string } 
       resolve(err ? null : stdout.trim()),
     );
   });
+
+/** Run a command and keep its stdout whatever the exit code (gh signals failing checks with one). Never throws. */
+export const runAnyExit = (cmd: string, args: string[], opts: { cwd?: string } = {}): { code: number; stdout: string } => {
+  const [file, argv] = prepare(cmd, args);
+  const res = spawnSync(file, argv, { cwd: opts.cwd, encoding: "utf8", shell: needsShell(cmd), maxBuffer: MAX_BUFFER });
+  return { code: res.status ?? 1, stdout: (res.stdout ?? "").trim() };
+};
 
 export interface Captured {
   code: number;

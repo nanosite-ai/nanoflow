@@ -35,9 +35,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "tsc": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run",
+    "test": "tsc -p tsconfig.json && vitest run",
     "docs": "node bin/nanoflow.mjs docs --write",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm test"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.7.2",
