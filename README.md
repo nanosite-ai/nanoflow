@@ -37,7 +37,7 @@ Claude Code, and turns every ritual into one deterministic command.
 
 `/nanoflow` opens a pane next to your session:
 
-<p align="center"><img src="docs/media/dashboard.png" alt="The nanoflow pane in Claude Code, with the terminal tab named after the task: every worktree with its ticket title, board column, PR, CI, progress stages, ports and folder link; the session's own worktree framed and badged THIS SESSION" width="720"></p>
+<p align="center"><img src="docs/media/demo.gif" alt="nanoflow in Claude Code: the agent picks up the dark mode ticket, which gets its own worktree and ports, writes the change, runs the checks and opens a PR. The pane beside the chat shows every worktree with its ticket, board column, PR, CI and ports, and updates live as CI goes green, the PR merges and the worktree is torn down" width="100%"></p>
 
 - **Your session's worktree is framed and badged**, so you always know where *this* agent is.
 - **Everything is a link**: the ticket, the PR, the failing CI run, each running service, the worktree folder.
