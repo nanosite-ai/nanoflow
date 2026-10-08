@@ -31,8 +31,42 @@ export const processesOnPort = (port: number): number[] =>
     ? pids(ps(`(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue).OwningProcess`))
     : pids(tryRun("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"]) ?? "");
 
+/**
+ * Unix: signal the pid's whole process group (services start as group leaders), so a `sh -c` wrapper can't
+ * leave its child running; dash, Ubuntu's sh, doesn't pass SIGTERM on. Falls back to the pid alone.
+ */
+const killGroup = (pid: number): boolean => {
+  for (const target of [-pid, pid]) {
+    try {
+      process.kill(target, "SIGTERM");
+      return true;
+    } catch {
+      // not a group leader, or already gone
+    }
+  }
+  return false;
+};
+
 /** Kill each pid and its children. Returns the pids that were signalled. */
 export const killTree = (targets: number[]): number[] =>
-  targets.filter((pid) =>
-    IS_WIN ? tryRun("taskkill", ["/PID", String(pid), "/T", "/F"]) !== null : tryRun("kill", ["-TERM", String(pid)]) !== null,
-  );
+  targets.filter((pid) => (IS_WIN ? tryRun("taskkill", ["/PID", String(pid), "/T", "/F"]) !== null : killGroup(pid)));
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Block until every pid has exited (or the timeout passes), so "stopped" means the ports are free. */
+export const waitForExit = (pids: number[], timeoutMs = 5_000): boolean => {
+  const deadline = Date.now() + timeoutMs;
+  const tick = new Int32Array(new SharedArrayBuffer(4));
+  while (pids.some(alive)) {
+    if (Date.now() > deadline) return false;
+    Atomics.wait(tick, 0, 0, 100);
+  }
+  return true;
+};
