@@ -105,8 +105,15 @@ export const nextFreeSlot = (config: FlowConfig, trees: Worktree[]): number => {
 };
 
 /** "Lease expires mid-post" → "lease-expires-mid-post". */
-export const slugify = (title: string, maxWords = 5): string =>
-  title.toLowerCase().replace(/[^a-z0-9\s-]/g, " ").split(/[\s-]+/).filter(Boolean).slice(0, maxWords).join("-");
+/** Words that only pad a branch or tab title. */
+const FILLER = new Set(["a", "an", "the", "for", "of", "to", "in", "on", "at", "with", "and", "or", "is", "be", "when", "after", "from", "by"]);
+
+/** "Dark mode for the storefront" → "dark-mode-storefront": lowercase, no filler words, at most maxWords. */
+export const slugify = (title: string, maxWords = 4): string => {
+  const words = title.toLowerCase().replace(/[^a-z0-9\s-]/g, " ").split(/[\s-]+/).filter(Boolean);
+  const meaningful = words.filter((w) => !FILLER.has(w));
+  return (meaningful.length ? meaningful : words).slice(0, maxWords).join("-");
+};
 
 export const assertFeature = (feature: string | undefined): string => {
   if (!feature || !/^[a-z0-9][a-z0-9-]*$/.test(feature)) throw new Error(`Invalid name "${feature ?? ""}". Use lowercase letters, digits and hyphens.`);
