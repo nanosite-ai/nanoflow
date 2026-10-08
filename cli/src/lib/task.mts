@@ -42,3 +42,9 @@ export const advanceTask = (t: CurrentTask, pr: number, status: Status, merged =
   setBoardStatus(t.repo, t.ticket, status);
   return title;
 };
+
+/** What happened on the board, by the repo's own column name; honest when there is no board. */
+export const boardNote = (repo: RepoContext, ticket: number, status: Status): string => {
+  const b = repo.config.github.board;
+  return b ? `#${ticket} → ${b.statuses[status]}` : `#${ticket}: no board configured, nothing to move`;
+};

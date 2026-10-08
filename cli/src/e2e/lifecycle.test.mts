@@ -269,6 +269,13 @@ describe("the task lifecycle", { timeout: 120_000 }, () => {
     expect(text).toContain(`**Local:** http://localhost:${SLOT1_PORT}`);
   });
 
+  test("task pr: title gets the PR, and says so honestly when there is no board", () => {
+    const res = nf(WT, "task", "pr", "8");
+    expect(res.code, res.stderr).toBe(0);
+    expect(res.stdout).toContain("#7: no board configured, nothing to move");
+    expect(res.stdout).toContain("#7 · feat/7-csv-export · csv export · PR #8");
+  });
+
   test("task done: the merged PR gets its ✓", () => {
     const res = nf(WT, "task", "done", "--json");
     expect(res.code, res.stderr).toBe(0);

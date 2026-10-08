@@ -10,7 +10,7 @@ import { c, info, result, success, warn } from "../lib/output.mjs";
 import { run, runAnyExit, tail, tryRun } from "../lib/proc.mjs";
 import { requireRepo, type RepoContext } from "../lib/repo.mjs";
 import { attachShotsToBody, shotRepoPath, shotsFolder, uploadShots } from "../lib/shots.mjs";
-import { advanceTask, currentTask } from "../lib/task.mjs";
+import { advanceTask, boardNote, currentTask } from "../lib/task.mjs";
 
 /** A PR body with the commits as a starting point and the ticket linked. */
 export const defaultPrBody = (ticket: number, commits: string[]): string =>
@@ -103,7 +103,7 @@ export const registerPr = (program: Command): void => {
         success(`${uploaded.length} screenshot(s) attached`);
       }
       advanceTask(t, number, STATUS.inReview);
-      result({ pr: number, url, title, issue: t.ticket }, () => success(`#${t.ticket} → In review`));
+      result({ pr: number, url, title, issue: t.ticket }, () => success(boardNote(repo, t.ticket, STATUS.inReview)));
     });
 
   pr.command("comments")

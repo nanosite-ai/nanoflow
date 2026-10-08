@@ -4,7 +4,7 @@ import { commentIssue, prForBranch, PR_STATE, setBoardStatus, viewIssue } from "
 import { dryRun, parseIssueNumber } from "../lib/globals.mjs";
 import { c, info, result, success } from "../lib/output.mjs";
 import { requireRepo, type RepoContext } from "../lib/repo.mjs";
-import { advanceTask, currentTask, storeBaseTitle, ticketOfBranch } from "../lib/task.mjs";
+import { advanceTask, boardNote, currentTask, storeBaseTitle, ticketOfBranch } from "../lib/task.mjs";
 import { applyTitles, baseTitle, withPr } from "../lib/titles.mjs";
 import { branchFor, createWorktree, slugify } from "../lib/worktree.mjs";
 import { addTicketOptions, createTicket, type NewTicketOpts } from "./ticket.mjs";
@@ -56,7 +56,7 @@ export const registerTask = (program: Command): void => {
       if (dryRun(cmd, `would ${opts.new ? `create "${opts.new}"` : `claim #${issueArg}`}, set In progress, create the worktree, set titles, comment`)) return;
 
       const issue = claimIssue(repo, issueArg, opts);
-      if (repo.config.github.board) success(`#${issue.number} → ${repo.config.github.board.statuses[STATUS.inProgress]}`);
+      if (repo.config.github.board) success(boardNote(repo, issue.number, STATUS.inProgress));
 
       const feature = `${issue.number}-${opts.slug ?? slugify(issue.title)}`;
       const branch = branchFor(repo, feature);
@@ -80,7 +80,7 @@ export const registerTask = (program: Command): void => {
       const t = currentTask();
       if (dryRun(cmd, `would add "· PR #${pr}" to the title and set #${t.ticket} → In review`)) return;
       const title = advanceTask(t, pr, STATUS.inReview);
-      result({ issue: t.ticket, pr, title }, () => success(`#${t.ticket} → In review`));
+      result({ issue: t.ticket, pr, title }, () => success(boardNote(t.repo, t.ticket, STATUS.inReview)));
     });
 
   task
@@ -95,7 +95,7 @@ export const registerTask = (program: Command): void => {
       if (dryRun(cmd, `would add "· PR #${pr.number} ✓" to the title and set #${t.ticket} → Done`)) return;
       const title = advanceTask(t, pr.number, STATUS.done, true);
       result({ issue: t.ticket, pr: pr.number, title }, () => {
-        success(`#${t.ticket} → Done`);
+        success(boardNote(t.repo, t.ticket, STATUS.done));
         info(c.dim(`next: ask before tearing down this worktree, then from the main checkout: nf wt remove <name> --delete-branch`));
       });
     });
