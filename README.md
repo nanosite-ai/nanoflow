@@ -6,6 +6,8 @@
 
 <sub>by <a href="https://nanosite.ai"><b>nanosite.ai</b></a></sub>
 
+[![CI](https://github.com/nanosite-ai/nanoflow/actions/workflows/ci.yml/badge.svg)](https://github.com/nanosite-ai/nanoflow/actions/workflows/ci.yml) [![npm](https://img.shields.io/npm/v/@nanosite/nanoflow)](https://www.npmjs.com/package/@nanosite/nanoflow) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 Run many tasks at once with Claude Code, each in its own git worktree on its own ports, and see all of
 them at a glance: which ticket, which branch, which PR, whether CI is red, what's running, what's ready to
 tear down.
@@ -221,8 +223,17 @@ Every field, the placeholders and the pane's action buttons: **[docs/config.md](
 ## 🤝 Contributing
 
 Issues and PRs welcome. Layout: the plugin is the repo root (`hooks/`, `types/`, `skills/`), the CLI is
-`cli/`. Run `claude plugin validate . && claude plugin test .` for the plugin and `npm test` in `cli/`.
-New CLI commands need `--help` examples, `--json` output and `--dry` before side effects.
+`cli/`. We build nanoflow with nanoflow: the repo's own `.claude/nanoflow.json` drives `nf task start`,
+`nf check` and `nf pr create`, and the dashboard shows our worktrees while we work.
+
+- `nf check` runs everything: the CLI's typecheck and tests, `claude plugin validate .` and `claude plugin test .`.
+- `npm test` in `cli/` builds, then runs the unit tests, the `--help`/docs checks and the end-to-end suite:
+  the whole task lifecycle on a throwaway repo with a real service and a fake `gh`, so it never touches
+  GitHub. `NANOFLOW_GH=<script.mjs>` is the hook that swaps `gh` for the fake.
+- CI runs both on Linux, macOS and Windows for every PR.
+
+New CLI commands need `--help` examples (a test enforces it), `--json` output and `--dry` before side
+effects. Regenerate the reference with `nf docs --write`.
 
 ## Made by nanosite.ai
 

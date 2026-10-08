@@ -1,0 +1,60 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nanosite-ai/nanoflow/main/nanoflow.schema.json",
+  "mainBranch": "main",
+  "provider": {
+    "snapshot": [
+      "nanoflow",
+      "flow",
+      "--json"
+    ],
+    "local": [
+      "nanoflow",
+      "flow",
+      "--json",
+      "--local"
+    ]
+  },
+  "github": {},
+  "services": [],
+  "worktree": {
+    "copy": [],
+    "install": "npm ci --prefix cli"
+  },
+  "checks": {
+    "typecheck": "npm run --prefix cli tsc",
+    "test": "npm test --prefix cli",
+    "plugin-validate": "claude plugin validate .",
+    "plugin-test": "claude plugin test ."
+  },
+  "actions": {
+    "startDev": null,
+    "stopDev": null,
+    "teardown": {
+      "label": "Teardown",
+      "run": [
+        "nanoflow",
+        "wt",
+        "remove",
+        "{feature}",
+        "--delete-branch",
+        "--yes"
+      ],
+      "cwd": "main",
+      "confirm": true
+    },
+    "startTask": {
+      "label": "Start",
+      "prompt": "Start ticket #{ticket} ({title}) with `nanoflow task start {ticket}`, then read the ticket and plan the work."
+    },
+    "newTicket": {
+      "label": "Create",
+      "run": [
+        "nanoflow",
+        "ticket",
+        "new",
+        "{title}"
+      ],
+      "cwd": "main"
+    }
+  }
+}
