@@ -13,6 +13,8 @@ export type PaneData = {
   checks: Readonly<Record<string, NfCheck>>
   tab: NfTab
   selected: string | null
+  /** The `at` of the activity entry whose output is open. */
+  expanded: number | null
   busy: string | null
   source: NfSource
   columns: number
@@ -26,6 +28,8 @@ export type PaneHandlers = {
   setTab: (tab: NfTab) => void
   refresh: () => void
   select: (path: string | null) => void
+  toggleOutput: (at: number) => void
+  copyOutput: (text: string) => void
   startDev: (wt: NfWorktree) => void
   stopDev: (wt: NfWorktree) => void
   teardown: (wt: NfWorktree) => void
@@ -263,19 +267,39 @@ const TicketsTab = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
   )
 }
 
-const ActivityTab = (el: PaneElements, data: PaneData) => {
-  const { Box, Text, Link } = el
+/** Lines of an open output shown in the pane; the copy button takes all of it. */
+const OUTPUT_ROWS = 40
+
+const ActivityTab = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
+  const { Box, Text, Button, Link } = el
   if (data.activity.length === 0) return <Text dimColor>Nothing yet: tests, PRs, CI, worktrees and the browser show up here.</Text>
-  const width = Math.max(20, data.columns - 10)
+  const width = Math.max(20, data.columns - 22)
   return (
     <Box key="activity" flexDirection="column">
-      {[...data.activity].reverse().map((a, i) => (
-        <Box key={`act-${a.at}-${i}`} flexDirection="row" gap={1}>
-          <Text dimColor>{clock(a.at)}</Text>
-          <Text color={TONE[a.tone]}>{`${a.icon} ${truncate(a.text, width)}`}</Text>
-          {a.href && <Link href={a.href} label="↗" />}
-        </Box>
-      ))}
+      {[...data.activity].reverse().map((a, i) => {
+        const k = `act-${a.at}-${i}`
+        const isOpen = a.detail !== undefined && data.expanded === a.at
+        const lines = isOpen ? a.detail!.split('\n') : []
+        return (
+          <Box key={k} flexDirection="column">
+            <Box key={`${k}-row`} flexDirection="row" gap={1}>
+              <Text dimColor>{clock(a.at)}</Text>
+              <Text color={TONE[a.tone]}>{`${a.icon} ${truncate(a.text, width)}`}</Text>
+              {a.href && <Link href={a.href} label="↗" />}
+              {a.detail && <Button key={`${k}-output`} plain label={isOpen ? '▾ output' : '▸ output'} onPress={() => on.toggleOutput(a.at)} />}
+            </Box>
+            {isOpen && (
+              <Box key={`${k}-detail`} flexDirection="column" borderStyle="single" borderColor={COLOR.muted} paddingX={1}>
+                {lines.length > OUTPUT_ROWS && <Text key={`${k}-more`} dimColor>{`… ${lines.length - OUTPUT_ROWS} earlier lines: 📋 copy for all of them`}</Text>}
+                {lines.slice(-OUTPUT_ROWS).map((line, j) => <Text key={`${k}-l${j}`}>{line || ' '}</Text>)}
+                <Box key={`${k}-tools`} flexDirection="row" gap={1}>
+                  <Button key={`${k}-copy`} label="📋 Copy output" onPress={() => on.copyOutput(a.detail!)} />
+                </Box>
+              </Box>
+            )}
+          </Box>
+        )
+      })}
     </Box>
   )
 }
@@ -288,7 +312,7 @@ export const PaneView = (el: PaneElements, data: PaneData, on: PaneHandlers) => 
       {data.source.error && <Text color={COLOR.wait}>{`⚠ ${data.source.error}`}</Text>}
       {data.tab === 'worktrees' && WorktreesTab(el, data, on)}
       {data.tab === 'tickets' && TicketsTab(el, data, on)}
-      {data.tab === 'activity' && ActivityTab(el, data)}
+      {data.tab === 'activity' && ActivityTab(el, data, on)}
     </Box>
   )
 }

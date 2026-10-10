@@ -3,7 +3,7 @@ import type { NfSnapshot, NfWorktree } from '../types'
 import { ACTION, DEFAULT_CONFIG, fillTemplate, mergeConfig } from '../hooks/config'
 import { diffSnapshots, mergeLocal } from '../hooks/diff'
 import { stagesOf, statusLine } from '../hooks/progress'
-import { browserEventOf, matchRule, toastFor } from '../hooks/rules'
+import { browserEventOf, causeOf, DETAIL_LINES, matchRule, outputDetail, toastFor } from '../hooks/rules'
 import { applyFlowResult, buildFlowQuery, ciRollup, parseWorktreeList, slugFromRemote, ticketNumberOf } from '../hooks/scan'
 import { COLOR, folderUrl, statusColor } from '../hooks/view'
 
@@ -57,6 +57,41 @@ describe('rules', () => {
     expect(browserEventOf('mcp__playwright__browser_navigate', { url: 'http://localhost:5243' })).toEqual({ kind: 'navigate', url: 'http://localhost:5243' })
     expect(browserEventOf('mcp__playwright-social__browser_close', {})).toEqual({ kind: 'close' })
     expect(browserEventOf('mcp__other__browser_navigate', { url: 'x' })).toBe(null)
+  })
+})
+
+describe('failed command output', () => {
+  // `ns up --bg` in a worktree whose npm install never finished.
+  const NPM_FAIL = [
+    '702-promo-name-only (slot 6)  front http://localhost:5233',
+    '▶ building @nanosite/ecommerce-sdk',
+    '✖ build of @nanosite/ecommerce-sdk failed:',
+    '> tsc -p tsconfig.build.json',
+    "'tsc' is not recognized as an internal or external command,",
+    'operable program or batch file.',
+    'npm error Lifecycle script `build` failed with error:',
+    'npm error code 1',
+    'npm error path C:\\x\\packages\\ecommerce-sdk',
+    'npm error command failed',
+    'npm error command C:\\WINDOWS\\system32\\cmd.exe /d /s /c tsc -p tsconfig.build.json',
+  ].join('\r\n')
+
+  test('names the headline and its cause, not npm boilerplate', () => {
+    expect(causeOf(NPM_FAIL)).toBe("build of @nanosite/ecommerce-sdk failed: 'tsc' is not recognized as an internal or external command")
+  })
+
+  test('a busy port, a bare headline, plain output', () => {
+    expect(causeOf('starting\nError: listen EADDRINUSE: address already in use :::5173\n    at Server.listen')).toBe('listen EADDRINUSE: address already in use :::5173')
+    expect(causeOf('\u001b[31m✖ checks failed\u001b[0m\ndone')).toBe('checks failed')
+    expect(causeOf('one\ntwo\n')).toBe('two')
+    expect(causeOf('')).toBe('')
+  })
+
+  test('keeps stdout then stderr, without colors, capped', () => {
+    expect(outputDetail('out\n', '\u001b[31merr\u001b[0m')).toBe('out\nerr')
+    const long = outputDetail(Array.from({ length: DETAIL_LINES + 5 }, (_, i) => `l${i}`).join('\n'), '')
+    expect(long.split('\n')).toHaveLength(DETAIL_LINES + 1)
+    expect(long.startsWith('… 5 earlier lines')).toBe(true)
   })
 })
 

@@ -43,7 +43,8 @@ export type NfSnapshot = {
 
 export type NfTone = 'info' | 'success' | 'error' | 'warning'
 
-export type NfActivity = { at: number; icon: string; text: string; tone: NfTone; href?: string }
+/** `detail`: the full output of a command behind the entry, shown on demand. */
+export type NfActivity = { at: number; icon: string; text: string; tone: NfTone; href?: string; detail?: string }
 
 export type NfCheck = { label: string; ok: boolean; at: number }
 
@@ -61,6 +62,8 @@ declare module 'claude-code' {
       skill: string | null
       tab: NfTab
       selected: string | null
+      /** The `at` of the activity entry whose output is open. */
+      expanded: number | null
       busy: string | null
       source: NfSource
     }

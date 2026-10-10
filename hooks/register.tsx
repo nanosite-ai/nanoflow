@@ -6,7 +6,7 @@ import type { NfActivity, NfCheck, NfService, NfSnapshot, NfSource, NfTab, NfTic
 import { ACTION, DEFAULT_CONFIG, fillTemplate, mergeConfig, starterConfig, type NfActionKey, type NfConfig } from './config'
 import { diffSnapshots, mergeLocal, type NfEvent } from './diff'
 import { statusLine } from './progress'
-import { browserEventOf, CHECK_KINDS, matchRule, shortCommand, toastFor } from './rules'
+import { browserEventOf, causeOf, CHECK_KINDS, matchRule, outputDetail, shortCommand, toastFor } from './rules'
 import {
   applyFlowResult, baseName, buildFlowQuery, isInside, isSnapshot, normalizePath, parseJson, parseWorktreeList, quoteForCmd, samePath, serviceUrl,
   featureOf, slugFromRemote, ticketNumberOf, ticketUrl, type GitWorktree, type GqlRepo,
@@ -27,6 +27,7 @@ const browserAtom = atom({ plugin: 'nanoflow', key: 'browserOpen' } as const, fa
 const skillAtom = atom({ plugin: 'nanoflow', key: 'skill' } as const, null)
 const tabAtom = atom({ plugin: 'nanoflow', key: 'tab' } as const, 'worktrees')
 const selectedAtom = atom({ plugin: 'nanoflow', key: 'selected' } as const, null)
+const expandedAtom = atom({ plugin: 'nanoflow', key: 'expanded' } as const, null)
 const busyAtom = atom({ plugin: 'nanoflow', key: 'busy' } as const, null)
 const sourceAtom = atom({ plugin: 'nanoflow', key: 'source' } as const, { config: 'defaults', provider: null, error: null })
 
@@ -192,10 +193,13 @@ const refreshStatus = async ($: $): Promise<void> => {
 }
 
 const emit = async ($: $, event: NfEvent): Promise<void> => {
-  const entry: NfActivity = { at: await $.clock.now(), icon: event.icon, text: event.text, tone: event.tone, ...(event.href ? { href: event.href } : {}) }
+  const entry: NfActivity = {
+    at: await $.clock.now(), icon: event.icon, text: event.text, tone: event.tone,
+    ...(event.href ? { href: event.href } : {}), ...(event.detail ? { detail: event.detail } : {}),
+  }
   await update($, activityAtom, list => [...list, entry].slice(-ACTIVITY_LIMIT))
   const wanted = S.toastLevel === 'all' || (S.toastLevel === 'important' && (event.important || event.tone === 'error'))
-  if (wanted) $.ui.toast(`${event.icon} ${event.text}`)
+  if (wanted) $.ui.toast(`${event.icon} ${event.text}${event.detail && event.tone === 'error' ? ' · full output in ⚡ Activity' : ''}`)
 }
 
 // ─── config + scanning ───────────────────────────────────────────────────────────────────────────
@@ -313,10 +317,12 @@ const runAction = async ($: $, key: NfActionKey, ctx: { wt?: NfWorktree; ticket?
   await update($, busyAtom, () => `${label} ${subject}`)
   try {
     const { exitCode, stdout, stderr } = await runCommand($, argv, { ...(where ? { cwd: where } : {}), timeoutMs: ACTION_TIMEOUT_MS })
-    const lastLine = (exitCode === 0 ? stdout : stderr || stdout).trim().split(/\r?\n/).pop() ?? ''
+    const lastLine = stdout.trim().split(/\r?\n/).pop() ?? ''
+    // Every run keeps its output on the activity entry, so a failure can be read in full from the pane.
+    const detail = outputDetail(stdout, stderr)
     await emit($, exitCode === 0
-      ? { icon: '✅', text: `${label} ${subject}${lastLine ? `: ${lastLine}` : ''}`, tone: 'success', important: true }
-      : { icon: '❌', text: `${label} ${subject} failed: ${lastLine}`, tone: 'error', important: true })
+      ? { icon: '✅', text: `${label} ${subject}${lastLine ? `: ${lastLine}` : ''}`, tone: 'success', important: true, detail }
+      : { icon: '❌', text: `${label} ${subject} failed: ${causeOf(`${stdout}\n${stderr}`) || `exit ${exitCode}`}`, tone: 'error', important: true, detail })
   } catch (error) {
     await emit($, { icon: '❌', text: `${label} ${subject} could not run: ${String(error)}`, tone: 'error', important: true })
   } finally {
@@ -329,6 +335,13 @@ const handlers = ($: $): PaneHandlers => ({
   setTab: (tab: NfTab) => void update($, tabAtom, () => tab),
   refresh: () => void refresh($, true),
   select: path => void update($, selectedAtom, () => path),
+  toggleOutput: at => void update($, expandedAtom, open => (open === at ? null : at)),
+  copyOutput: text => {
+    void (async () => {
+      const copied = await $.ui.copy({ text })
+      $.ui.toast(copied.isCopied ? '📋 Copied the output' : 'Could not copy the output')
+    })()
+  },
   startDev: wt => void runAction($, ACTION.startDev, { wt }),
   stopDev: wt => void runAction($, ACTION.stopDev, { wt }),
   teardown: wt => void runAction($, ACTION.teardown, { wt }),
@@ -518,6 +531,7 @@ export const register: Register = (on, options) => {
       checks: await read($, checksAtom),
       tab: await read($, tabAtom),
       selected: await read($, selectedAtom),
+      expanded: await read($, expandedAtom),
       busy: await read($, busyAtom),
       source,
       columns: e.props.bodyColumns,

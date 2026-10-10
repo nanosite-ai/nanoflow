@@ -1,7 +1,7 @@
 // Snapshot → snapshot: what changed that the person should hear about. Pure.
 import type { NfSnapshot, NfTone, NfWorktree } from '../types'
 
-export type NfEvent = { icon: string; text: string; tone: NfTone; important: boolean; href?: string }
+export type NfEvent = { icon: string; text: string; tone: NfTone; important: boolean; href?: string; detail?: string }
 
 const label = (wt: NfWorktree): string =>
   wt.ticket ? `#${wt.ticket.number}${wt.ticket.title ? ` ${truncate(wt.ticket.title, 40)}` : ''}` : wt.name
