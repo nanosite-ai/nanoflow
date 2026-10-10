@@ -76,6 +76,8 @@ describe('dashboard pane', () => {
     const ui = await $.ui.mount({ plugin: 'nanoflow', surface: 'terminal', ...PANE })
     await ui.press({ key: `select-${busy.path}` })
     expect(await ui.find({ key: `pick-up-${busy.path}` })).toBeUndefined()
+    // A card's actions show only while it is expanded.
+    expect(await ui.find({ key: `pick-up-${ready.path}` })).toBeUndefined()
     await ui.press({ key: `select-${ready.path}` })
     expect(await ui.find({ type: 'Link', label: 'web :5183' })).toBeDefined()
     await ui.press({ key: `pick-up-${ready.path}` })

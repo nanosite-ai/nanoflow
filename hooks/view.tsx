@@ -21,7 +21,7 @@ export type PaneData = {
   columns: number
   now: number
   /** Which action buttons the repo configured. */
-  can: { pickUp: boolean; teardown: boolean; startTask: boolean; newTicket: boolean }
+  can: { pickUp: boolean; startDev: boolean; stopDev: boolean; teardown: boolean; startTask: boolean; newTicket: boolean }
   openService: string | null
 }
 
@@ -32,6 +32,8 @@ export type PaneHandlers = {
   toggleOutput: (at: number) => void
   copyOutput: (text: string) => void
   pickUp: (wt: NfWorktree) => void
+  startDev: (wt: NfWorktree) => void
+  stopDev: (wt: NfWorktree) => void
   teardown: (wt: NfWorktree) => void
   copyPath: (wt: NfWorktree) => void
   startTask: (ticket: NfTicket) => void
@@ -153,6 +155,8 @@ const WorktreeCard = (el: PaneElements, data: PaneData, on: PaneHandlers, wt: Nf
       ], { indent: true, wrap: false })}
       {isSelected && Row(el, k('actions'), [
         data.can.pickUp && isPickable(wt) && <Button key={k('pick-up')} label="▶ Pick up" onPress={() => on.pickUp(wt)} />,
+        data.can.startDev && <Button key={k('up')} label="🚀 Start dev" onPress={() => on.startDev(wt)} />,
+        data.can.stopDev && <Button key={k('down')} label="■ Stop" onPress={() => on.stopDev(wt)} />,
         open && <Link key={k('open-app')} href={open.url} label="🌐 Open app ↗" />,
         wt.pr && <Link key={k('open-pr')} href={wt.pr.url} label="🔀 Open PR ↗" />,
         wt.ticket && <Link key={k('open-ticket')} href={wt.ticket.url} label="🎫 Open ticket ↗" />,

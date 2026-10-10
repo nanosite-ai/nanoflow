@@ -45,6 +45,8 @@ export type NfAction = {
 
 export const ACTION = {
   pickUp: 'pickUp',
+  startDev: 'startDev',
+  stopDev: 'stopDev',
   teardown: 'teardown',
   startTask: 'startTask',
   newTicket: 'newTicket',

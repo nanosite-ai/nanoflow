@@ -110,10 +110,10 @@ describe('config', () => {
   })
 
   test('actions override, and null removes one', () => {
-    const c = mergeConfig({ actions: { pickUp: { run: ['ns', 'board', 'set', '{ticket}', 'in-progress'] }, startTask: null, startDev: { run: ['x'] } } })
+    const c = mergeConfig({ actions: { pickUp: { run: ['ns', 'board', 'set', '{ticket}', 'in-progress'] }, startTask: null, bogus: { run: ['x'] } } })
     expect(c.actions[ACTION.pickUp]?.run).toEqual(['ns', 'board', 'set', '{ticket}', 'in-progress'])
     expect(c.actions[ACTION.startTask]).toBe(undefined)
-    expect(Object.keys(c.actions).includes('startDev')).toBe(false)
+    expect(Object.keys(c.actions).includes('bogus')).toBe(false)
   })
 
   test('templates', () => {

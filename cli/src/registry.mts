@@ -8,7 +8,7 @@ import { registerTask, registerTitle } from "./commands/task.mjs";
 import { registerBoard, registerTicket } from "./commands/ticket.mjs";
 import { registerEnv, registerWt } from "./commands/wt.mjs";
 
-export const VERSION = "0.1.2";
+export const VERSION = "0.1.3";
 
 export const buildProgram = (): Command => {
   const program = new Command("nanoflow")

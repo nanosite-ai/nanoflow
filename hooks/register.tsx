@@ -344,6 +344,8 @@ const handlers = ($: $): PaneHandlers => ({
   toggleOutput: at => void update($, expandedAtom, open => (open === at ? null : at)),
   copyOutput: text => void copy($, text, '📋 Copied the output', 'Could not copy the output'),
   pickUp: wt => void runAction($, ACTION.pickUp, { wt }),
+  startDev: wt => void runAction($, ACTION.startDev, { wt }),
+  stopDev: wt => void runAction($, ACTION.stopDev, { wt }),
   teardown: wt => void runAction($, ACTION.teardown, { wt }),
   copyPath: wt => void copy($, wt.path, `📋 Copied ${wt.path}`, `Path: ${wt.path}`),
   startTask: ticket => void runAction($, ACTION.startTask, { ticket }),
@@ -533,6 +535,8 @@ export const register: Register = (on, options) => {
       now: await $.clock.now(),
       can: {
         pickUp: Boolean(S.config.actions.pickUp),
+        startDev: Boolean(S.config.actions.startDev),
+        stopDev: Boolean(S.config.actions.stopDev),
         teardown: Boolean(S.config.actions.teardown),
         startTask: Boolean(S.config.actions.startTask),
         newTicket: Boolean(S.config.actions.newTicket),

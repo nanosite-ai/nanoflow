@@ -318,6 +318,7 @@ describe("init on a repo whose package lives in a subfolder", { timeout: 60_000 
     expect(config.checks).toEqual({ typecheck: "cd cli && npm run tsc", test: "cd cli && npm test" });
     expect(config.services).toEqual([]);
     expect(config.worktree.install).toBe("cd cli && npm install");
+    expect(config.actions.startDev).toBeNull();
     expect(config.actions.pickUp.prompt).toContain("nanoflow board set {ticket} in-progress");
     const settings = JSON.parse(readFileSync(path.join(repo, ".claude", "settings.json"), "utf8"));
     expect(settings.enabledPlugins["nanoflow@nanoflow"]).toBe(true);
