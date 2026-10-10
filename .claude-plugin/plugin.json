@@ -1,6 +1,6 @@
 {
   "name": "nanoflow",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "nanoflow by nanosite.ai: your dev workflow, live. Worktrees on their own ports, tickets, PRs/CI, checks and Playwright as a dashboard pane, a progress status line and toasts, plus dev skills.",
   "author": {
     "name": "nanosite.ai",
