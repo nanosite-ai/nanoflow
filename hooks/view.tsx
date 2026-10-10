@@ -1,11 +1,12 @@
 // The dashboard pane: Worktrees / Tickets / Activity, with links and action buttons. A tree from the
-// surface's own element table; every handler is passed in, so this file holds no state.
-import type { Elements } from 'claude-code'
+// surface's own element table; every handler is passed in, so this file holds no state. The shared
+// pieces (Row, Badge, Mark, links) live in ./ui.
 import type { NfActivity, NfCheck, NfSnapshot, NfSource, NfTab, NfTicket, NfWorktree } from '../types'
 import { truncate } from './diff'
 import { stagesOf, type StageState } from './progress'
+import { Badge, COLOR, LinkOr, type Look, Mark, type PaneElements, Row, StatusBadge, TicketLink } from './ui'
 
-export type PaneElements = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button' | 'Link'> & { Input?: Elements['terminal']['Input'] }
+export { COLOR, statusColor, type PaneElements } from './ui'
 
 export type PaneData = {
   snapshot: NfSnapshot | null
@@ -20,7 +21,7 @@ export type PaneData = {
   columns: number
   now: number
   /** Which action buttons the repo configured. */
-  can: { startDev: boolean; stopDev: boolean; teardown: boolean; startTask: boolean; newTicket: boolean }
+  can: { pickUp: boolean; startDev: boolean; stopDev: boolean; teardown: boolean; startTask: boolean; newTicket: boolean }
   openService: string | null
 }
 
@@ -30,6 +31,7 @@ export type PaneHandlers = {
   select: (path: string | null) => void
   toggleOutput: (at: number) => void
   copyOutput: (text: string) => void
+  pickUp: (wt: NfWorktree) => void
   startDev: (wt: NfWorktree) => void
   stopDev: (wt: NfWorktree) => void
   teardown: (wt: NfWorktree) => void
@@ -45,51 +47,34 @@ export const folderUrl = (path: string): string => {
   return new URL(p.startsWith('/') ? `file://${p}` : `file:///${p}`).href
 }
 
-/**
- * Semantic colors, as theme keys so they follow the person's light/dark theme. PRs keep GitHub's
- * meanings: open green, merged purple, closed red.
- */
-export const COLOR = {
-  current: 'claude',
-  selected: 'suggestion',
-  ok: 'success',
-  bad: 'error',
-  wait: 'warning',
-  merged: 'merged',
-  info: 'suggestion',
-  muted: 'inactive',
-  onBadge: 'inverseText',
-} as const
-
-const CI_BADGE: Record<string, { icon: string; color: string }> = {
+const CI_LOOK: Record<string, Look> = {
   pass: { icon: '✅', color: COLOR.ok },
   fail: { icon: '❌', color: COLOR.bad },
   pending: { icon: '🟡', color: COLOR.wait },
 }
 
-const PR_BADGE: Record<string, { icon: string; color: string }> = {
+const PR_LOOK: Record<string, Look> = {
   OPEN: { icon: '🟢', color: COLOR.ok },
   MERGED: { icon: '🟣', color: COLOR.merged },
   CLOSED: { icon: '🔴', color: COLOR.bad },
 }
 
-const STAGE_LOOK: Record<StageState, { mark: string; color: string }> = {
-  done: { mark: '✓', color: COLOR.ok },
-  active: { mark: '…', color: COLOR.wait },
-  fail: { mark: '✗', color: COLOR.bad },
-  todo: { mark: '○', color: COLOR.muted },
+const STAGE_LOOK: Record<StageState, Look> = {
+  done: { icon: '✓', color: COLOR.ok },
+  active: { icon: '…', color: COLOR.wait },
+  fail: { icon: '✗', color: COLOR.bad },
+  todo: { icon: '○', color: COLOR.muted },
 }
+
+const SERVICE_LOOK = { up: { icon: '●', color: COLOR.ok }, down: { icon: '○', color: COLOR.muted } } as const
 
 const TONE: Record<NfActivity['tone'], string | undefined> = { error: COLOR.bad, success: COLOR.ok, warning: COLOR.wait, info: undefined }
 
-/** Board column → badge color; an unknown column stays neutral. */
-export const statusColor = (status: string | null): string => {
-  const s = (status ?? '').toLowerCase()
-  if (s.includes('progress')) return COLOR.wait
-  if (s.includes('review')) return COLOR.merged
-  if (s.includes('ready') || s.includes('todo')) return COLOR.info
-  if (s.includes('done')) return COLOR.ok
-  return COLOR.muted
+/** A worktree's ticket is still up for pickup: open, not yet In progress / In review / Done, and no PR. */
+export const isPickable = (wt: NfWorktree): boolean => {
+  if (wt.isMain || !wt.ticket || wt.ticket.state === 'CLOSED' || wt.pr) return false
+  const s = (wt.ticket.status ?? '').toLowerCase()
+  return !['progress', 'review', 'done'].some(word => s.includes(word))
 }
 
 const ago = (now: number, iso: string): string => {
@@ -102,47 +87,32 @@ const clock = (at: number): string => {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-const Badge = (el: PaneElements, key: string, text: string, color: string) => {
-  const { Text } = el
-  return <Text key={key} backgroundColor={color} color={COLOR.onBadge} bold>{` ${text} `}</Text>
-}
-
 const Tabs = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
-  const { Box, Text, Button } = el
+  const { Text, Button } = el
   const tabs: Array<[NfTab, string, string]> = [['worktrees', '🌳 Worktrees', 'w'], ['tickets', '🎫 Tickets', 't'], ['activity', '⚡ Activity', 'a']]
   const updated = data.snapshot ? `updated ${ago(data.now, data.snapshot.generatedAt)}` : 'scanning…'
   const from = data.source.provider ?? 'git/gh'
-  return (
-    <Box key="tabs" flexDirection="row" gap={1} flexWrap="wrap">
-      {tabs.map(([tab, label, hotkey]) => (
-        <Button key={`tab-${tab}`} label={label} hotkey={hotkey} variant={data.tab === tab ? 'primary' : 'secondary'} onPress={() => on.setTab(tab)} />
-      ))}
-      <Button key="refresh" label="🔄 Refresh" hotkey="r" onPress={on.refresh} />
-      <Text dimColor>{`${updated} · ${from}`}</Text>
-      <Text color={COLOR.current} dimColor>nanoflow by nanosite.ai</Text>
-      {data.busy !== null && <Text color={COLOR.wait} bold>{`⏳ ${data.busy}`}</Text>}
-    </Box>
-  )
+  return Row(el, 'tabs', [
+    ...tabs.map(([tab, label, hotkey]) => (
+      <Button key={`tab-${tab}`} label={label} hotkey={hotkey} variant={data.tab === tab ? 'primary' : 'secondary'} onPress={() => on.setTab(tab)} />
+    )),
+    <Button key="refresh" label="🔄 Refresh" hotkey="r" onPress={on.refresh} />,
+    <Text key="updated" dimColor>{`${updated} · ${from}`}</Text>,
+    <Text key="brand" color={COLOR.current} dimColor>nanoflow by nanosite.ai</Text>,
+    data.busy !== null && <Text key="busy" color={COLOR.wait} bold>{`⏳ ${data.busy}`}</Text>,
+  ])
 }
 
-const Stages = (el: PaneElements, key: string, wt: NfWorktree, checks: PaneData['checks']) => {
-  const { Box, Text } = el
-  return (
-    <Box key={key} flexDirection="row" gap={1} flexWrap="wrap" paddingLeft={2}>
-      {stagesOf(wt, checks).map(st => (
-        <Text key={`${key}-${st.key}`} color={STAGE_LOOK[st.state].color}>{`${STAGE_LOOK[st.state].mark}${st.label}`}</Text>
-      ))}
-    </Box>
-  )
-}
+const Stages = (el: PaneElements, key: string, wt: NfWorktree, checks: PaneData['checks']) =>
+  Row(el, key, stagesOf(wt, checks).map(st => Mark(el, `${key}-${st.key}`, STAGE_LOOK[st.state], st.label)), { indent: true })
 
 const WorktreeCard = (el: PaneElements, data: PaneData, on: PaneHandlers, wt: NfWorktree) => {
   const { Box, Text, Button, Link } = el
   const width = Math.max(20, data.columns - 6)
   const isSelected = data.selected === wt.path
   const title = wt.ticket?.title ? truncate(wt.ticket.title, Math.max(10, width - wt.name.length - 30)) : null
-  const ci = wt.pr ? CI_BADGE[wt.pr.ci] : undefined
-  const pr = wt.pr ? PR_BADGE[wt.pr.state] ?? PR_BADGE.OPEN : undefined
+  const ci = wt.pr ? CI_LOOK[wt.pr.ci] : undefined
+  const pr = wt.pr ? PR_LOOK[wt.pr.state] ?? PR_LOOK.OPEN : undefined
   const merged = wt.pr?.state === 'MERGED' || wt.pr?.state === 'CLOSED'
   const open = wt.services.find(s => s.isUp && s.name === data.openService) ?? wt.services.find(s => s.isUp)
   const icon = wt.isMain ? '🏠' : wt.services.some(s => s.isUp) ? '🚀' : '🌿'
@@ -155,71 +125,64 @@ const WorktreeCard = (el: PaneElements, data: PaneData, on: PaneHandlers, wt: Nf
       : { paddingX: 2, marginBottom: 1 }
   return (
     <Box key={k('card')} flexDirection="column" {...frame}>
-      <Box key={k('head')} flexDirection="row" gap={1} flexWrap="wrap">
-        {wt.isCurrent && Badge(el, k('here'), '📍 THIS SESSION', COLOR.current)}
-        <Button key={k('select')} plain label={`${isSelected ? '▾' : '▸'} ${icon} ${wt.name}`} onPress={() => on.select(isSelected ? null : wt.path)} />
-        {wt.ticket && <Link href={wt.ticket.url} label={`🎫 #${wt.ticket.number}`} />}
-        {title && <Text bold color={wt.isCurrent ? COLOR.current : undefined}>{title}</Text>}
-        {wt.ticket?.status && Badge(el, k('status'), wt.ticket.status, statusColor(wt.ticket.status))}
-      </Box>
-      <Box key={k('meta')} flexDirection="row" gap={1} paddingLeft={2} flexWrap="wrap">
-        <Text color={COLOR.info}>{`⎇ ${wt.branch ?? '(detached)'}`}</Text>
-        <Text dimColor>{`slot ${wt.slot ?? '?'}`}</Text>
-        {wt.dirty > 0 && <Text color={COLOR.wait}>{`✎ ${wt.dirty} changed`}</Text>}
-        {wt.ahead > 0 && <Text color={COLOR.ok}>{`↑ ${wt.ahead} ahead`}</Text>}
-        {wt.pr && pr && <Text key={k('pr-icon')} color={pr.color}>{pr.icon}</Text>}
-        {wt.pr && <Link href={wt.pr.url} label={`PR #${wt.pr.number} ${wt.pr.state.toLowerCase()}`} />}
-        {ci && <Text key={k('ci-icon')} color={ci.color}>{ci.icon}</Text>}
-        {ci && (wt.pr?.ciUrl ? <Link href={wt.pr.ciUrl} label="CI" /> : <Text color={ci.color}>CI</Text>)}
-      </Box>
+      {Row(el, k('head'), [
+        wt.isCurrent && Badge(el, k('here'), '📍 THIS SESSION', COLOR.current),
+        <Button key={k('select')} plain label={`${isSelected ? '▾' : '▸'} ${icon} ${wt.name}`} onPress={() => on.select(isSelected ? null : wt.path)} />,
+        wt.ticket && TicketLink(el, k('ticket'), wt.ticket),
+        title && <Text key={k('title')} bold color={wt.isCurrent ? COLOR.current : undefined}>{title}</Text>,
+        wt.ticket?.status && StatusBadge(el, k('status'), wt.ticket.status),
+      ])}
+      {Row(el, k('meta'), [
+        <Text key={k('branch')} color={COLOR.info}>{`⎇ ${wt.branch ?? '(detached)'}`}</Text>,
+        <Text key={k('slot')} dimColor>{`slot ${wt.slot ?? '?'}`}</Text>,
+        wt.dirty > 0 && <Text key={k('dirty')} color={COLOR.wait}>{`✎ ${wt.dirty} changed`}</Text>,
+        wt.ahead > 0 && <Text key={k('ahead')} color={COLOR.ok}>{`↑ ${wt.ahead} ahead`}</Text>,
+        pr && Mark(el, k('pr-icon'), pr),
+        wt.pr && <Link key={k('pr')} href={wt.pr.url} label={`PR #${wt.pr.number} ${wt.pr.state.toLowerCase()}`} />,
+        ci && Mark(el, k('ci-icon'), ci),
+        ci && LinkOr(el, k('ci'), wt.pr?.ciUrl, 'CI', ci.color),
+      ], { indent: true })}
       {!wt.isMain && Stages(el, k('stages'), wt, wt.isCurrent ? data.checks : {})}
-      {wt.services.length > 0 && (
-        <Box key={k('svc')} flexDirection="row" gap={2} paddingLeft={2} flexWrap="wrap">
-          {wt.services.map(s => (
-            <Box key={k(`svc-${s.name}`)} flexDirection="row" gap={1}>
-              <Text color={s.isUp ? COLOR.ok : COLOR.muted}>{s.isUp ? '●' : '○'}</Text>
-              {s.isUp ? <Link href={s.url} label={`${s.name} :${s.port}`} /> : <Text dimColor>{`${s.name} :${s.port}`}</Text>}
-            </Box>
-          ))}
-        </Box>
-      )}
-      <Box key={k('path')} flexDirection="row" gap={1} paddingLeft={2}>
-        <Text>📂</Text>
-        <Link href={folderUrl(wt.path)} label={truncate(wt.path, width - 4)} />
-      </Box>
-      {isSelected && (
-        <Box key={k('actions')} flexDirection="row" gap={1} paddingLeft={2} flexWrap="wrap">
-          {data.can.startDev && <Button key={k('up')} label="▶ Start dev" onPress={() => on.startDev(wt)} />}
-          {data.can.stopDev && <Button key={k('down')} label="■ Stop" onPress={() => on.stopDev(wt)} />}
-          {open && <Link href={open.url} label="🌐 Open app ↗" />}
-          {wt.pr && <Link href={wt.pr.url} label="🔀 Open PR ↗" />}
-          {wt.ticket && <Link href={wt.ticket.url} label="🎫 Open ticket ↗" />}
-          <Button key={k('copy')} label="📋 Copy path" onPress={() => on.copyPath(wt)} />
-          {data.can.teardown && !wt.isMain && merged && <Button key={k('teardown')} label="🧹 Teardown" onPress={() => on.teardown(wt)} />}
-          {data.can.teardown && !wt.isMain && !merged && <Text dimColor>🧹 teardown once the PR is merged</Text>}
-        </Box>
-      )}
+      {wt.services.length > 0 && Row(el, k('svc'), wt.services.map(s => (
+        Row(el, k(`svc-${s.name}`), [
+          Mark(el, k(`svc-${s.name}-dot`), s.isUp ? SERVICE_LOOK.up : SERVICE_LOOK.down),
+          LinkOr(el, k(`svc-${s.name}-link`), s.isUp ? s.url : null, `${s.name} :${s.port}`),
+        ], { wrap: false })
+      )), { gap: 2, indent: true })}
+      {Row(el, k('path'), [
+        <Text key={k('path-icon')}>📂</Text>,
+        <Link key={k('path-link')} href={folderUrl(wt.path)} label={truncate(wt.path, width - 4)} />,
+      ], { indent: true, wrap: false })}
+      {isSelected && Row(el, k('actions'), [
+        data.can.pickUp && isPickable(wt) && <Button key={k('pick-up')} label="▶ Pick up" onPress={() => on.pickUp(wt)} />,
+        data.can.startDev && <Button key={k('up')} label="🚀 Start dev" onPress={() => on.startDev(wt)} />,
+        data.can.stopDev && <Button key={k('down')} label="■ Stop" onPress={() => on.stopDev(wt)} />,
+        open && <Link key={k('open-app')} href={open.url} label="🌐 Open app ↗" />,
+        wt.pr && <Link key={k('open-pr')} href={wt.pr.url} label="🔀 Open PR ↗" />,
+        wt.ticket && <Link key={k('open-ticket')} href={wt.ticket.url} label="🎫 Open ticket ↗" />,
+        <Button key={k('copy')} label="📋 Copy path" onPress={() => on.copyPath(wt)} />,
+        data.can.teardown && !wt.isMain && merged && <Button key={k('teardown')} label="🧹 Teardown" onPress={() => on.teardown(wt)} />,
+        data.can.teardown && !wt.isMain && !merged && <Text key={k('teardown-later')} dimColor>🧹 teardown once the PR is merged</Text>,
+      ], { indent: true })}
     </Box>
   )
 }
 
 /** One line of counts above the cards. */
 const Fleet = (el: PaneElements, snapshot: NfSnapshot) => {
-  const { Box, Text } = el
+  const { Text } = el
   const trees = snapshot.worktrees
   const running = trees.filter(w => w.services.some(s => s.isUp)).length
   const prs = trees.filter(w => w.pr?.state === 'OPEN').length
   const red = trees.filter(w => w.pr?.state === 'OPEN' && w.pr.ci === 'fail').length
   const done = trees.filter(w => !w.isMain && (w.pr?.state === 'MERGED' || w.pr?.state === 'CLOSED')).length
-  return (
-    <Box key="fleet" flexDirection="row" gap={2} flexWrap="wrap">
-      <Text bold>{`🌳 ${trees.length} worktrees`}</Text>
-      <Text color={running ? COLOR.ok : COLOR.muted}>{`🚀 ${running} running`}</Text>
-      <Text color={prs ? COLOR.info : COLOR.muted}>{`🔀 ${prs} open PRs`}</Text>
-      {red > 0 && <Text color={COLOR.bad} bold>{`❌ ${red} red CI`}</Text>}
-      {done > 0 && <Text color={COLOR.merged}>{`🧹 ${done} ready to tear down`}</Text>}
-    </Box>
-  )
+  return Row(el, 'fleet', [
+    <Text key="fleet-trees" bold>{`🌳 ${trees.length} worktrees`}</Text>,
+    <Text key="fleet-running" color={running ? COLOR.ok : COLOR.muted}>{`🚀 ${running} running`}</Text>,
+    <Text key="fleet-prs" color={prs ? COLOR.info : COLOR.muted}>{`🔀 ${prs} open PRs`}</Text>,
+    red > 0 && <Text key="fleet-red" color={COLOR.bad} bold>{`❌ ${red} red CI`}</Text>,
+    done > 0 && <Text key="fleet-done" color={COLOR.merged}>{`🧹 ${done} ready to tear down`}</Text>,
+  ], { gap: 2 })
 }
 
 const WorktreesTab = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
@@ -239,7 +202,7 @@ const WorktreesTab = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
 }
 
 const TicketsTab = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
-  const { Box, Text, Button, Link, Input } = el
+  const { Box, Text, Button, Input } = el
   const board = data.snapshot?.board
   const width = Math.max(20, data.columns - 44)
   return (
@@ -253,16 +216,14 @@ const TicketsTab = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
         ? <Text dimColor>{data.snapshot ? 'Tickets load with the next full refresh (r).' : '🔎 Scanning…'}</Text>
         : board.length === 0
           ? <Text dimColor>No open tickets. 🎉</Text>
-          : board.map(t => (
-              <Box key={`ticket-${t.number}`} flexDirection="row" gap={1} flexWrap="wrap">
-                <Link href={t.url} label={`🎫 #${t.number}`} />
-                {t.status && Badge(el, `status-${t.number}`, t.status, statusColor(t.status))}
-                <Text bold={t.worktree !== null}>{truncate(t.title ?? '', width)}</Text>
-                {t.worktree
-                  ? <Button key={`go-${t.number}`} plain label={`🌿 → ${t.worktree}`} onPress={() => on.goTo(t)} />
-                  : data.can.startTask && <Button key={`start-${t.number}`} label="▶ Start" onPress={() => on.startTask(t)} />}
-              </Box>
-            ))}
+          : board.map(t => Row(el, `ticket-${t.number}`, [
+              TicketLink(el, `link-${t.number}`, t),
+              t.status && StatusBadge(el, `status-${t.number}`, t.status),
+              <Text key={`title-${t.number}`} bold={t.worktree !== null}>{truncate(t.title ?? '', width)}</Text>,
+              t.worktree
+                ? <Button key={`go-${t.number}`} plain label={`🌿 → ${t.worktree}`} onPress={() => on.goTo(t)} />
+                : data.can.startTask && <Button key={`start-${t.number}`} label="▶ Start" onPress={() => on.startTask(t)} />,
+            ]))}
     </Box>
   )
 }
@@ -282,19 +243,19 @@ const ActivityTab = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
         const lines = isOpen ? a.detail!.split('\n') : []
         return (
           <Box key={k} flexDirection="column">
-            <Box key={`${k}-row`} flexDirection="row" gap={1}>
-              <Text dimColor>{clock(a.at)}</Text>
-              <Text color={TONE[a.tone]}>{`${a.icon} ${truncate(a.text, width)}`}</Text>
-              {a.href && <Link href={a.href} label="↗" />}
-              {a.detail && <Button key={`${k}-output`} plain label={isOpen ? '▾ output' : '▸ output'} onPress={() => on.toggleOutput(a.at)} />}
-            </Box>
+            {Row(el, `${k}-row`, [
+              <Text key={`${k}-at`} dimColor>{clock(a.at)}</Text>,
+              <Text key={`${k}-text`} color={TONE[a.tone]}>{`${a.icon} ${truncate(a.text, width)}`}</Text>,
+              a.href && <Link key={`${k}-href`} href={a.href} label="↗" />,
+              a.detail && <Button key={`${k}-output`} plain label={isOpen ? '▾ output' : '▸ output'} onPress={() => on.toggleOutput(a.at)} />,
+            ], { wrap: false })}
             {isOpen && (
               <Box key={`${k}-detail`} flexDirection="column" borderStyle="single" borderColor={COLOR.muted} paddingX={1}>
                 {lines.length > OUTPUT_ROWS && <Text key={`${k}-more`} dimColor>{`… ${lines.length - OUTPUT_ROWS} earlier lines: 📋 copy for all of them`}</Text>}
                 {lines.slice(-OUTPUT_ROWS).map((line, j) => <Text key={`${k}-l${j}`}>{line || ' '}</Text>)}
-                <Box key={`${k}-tools`} flexDirection="row" gap={1}>
-                  <Button key={`${k}-copy`} label="📋 Copy output" onPress={() => on.copyOutput(a.detail!)} />
-                </Box>
+                {Row(el, `${k}-tools`, [
+                  <Button key={`${k}-copy`} label="📋 Copy output" onPress={() => on.copyOutput(a.detail!)} />,
+                ])}
               </Box>
             )}
           </Box>

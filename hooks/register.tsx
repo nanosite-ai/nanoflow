@@ -331,26 +331,23 @@ const runAction = async ($: $, key: NfActionKey, ctx: { wt?: NfWorktree; ticket?
   }
 }
 
+/** Copy to the clipboard and say how it went. */
+const copy = async ($: $, text: string, copied: string, failed: string): Promise<void> => {
+  const result = await $.ui.copy({ text })
+  $.ui.toast(result.isCopied ? copied : failed)
+}
+
 const handlers = ($: $): PaneHandlers => ({
   setTab: (tab: NfTab) => void update($, tabAtom, () => tab),
   refresh: () => void refresh($, true),
   select: path => void update($, selectedAtom, () => path),
   toggleOutput: at => void update($, expandedAtom, open => (open === at ? null : at)),
-  copyOutput: text => {
-    void (async () => {
-      const copied = await $.ui.copy({ text })
-      $.ui.toast(copied.isCopied ? '📋 Copied the output' : 'Could not copy the output')
-    })()
-  },
+  copyOutput: text => void copy($, text, '📋 Copied the output', 'Could not copy the output'),
+  pickUp: wt => void runAction($, ACTION.pickUp, { wt }),
   startDev: wt => void runAction($, ACTION.startDev, { wt }),
   stopDev: wt => void runAction($, ACTION.stopDev, { wt }),
   teardown: wt => void runAction($, ACTION.teardown, { wt }),
-  copyPath: wt => {
-    void (async () => {
-      const copied = await $.ui.copy({ text: wt.path })
-      $.ui.toast(copied.isCopied ? `📋 Copied ${wt.path}` : `Path: ${wt.path}`)
-    })()
-  },
+  copyPath: wt => void copy($, wt.path, `📋 Copied ${wt.path}`, `Path: ${wt.path}`),
   startTask: ticket => void runAction($, ACTION.startTask, { ticket }),
   goTo: ticket => {
     void (async () => {
@@ -537,6 +534,7 @@ export const register: Register = (on, options) => {
       columns: e.props.bodyColumns,
       now: await $.clock.now(),
       can: {
+        pickUp: Boolean(S.config.actions.pickUp),
         startDev: Boolean(S.config.actions.startDev),
         stopDev: Boolean(S.config.actions.stopDev),
         teardown: Boolean(S.config.actions.teardown),

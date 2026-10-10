@@ -79,6 +79,7 @@ export const starterConfig = (repo: RepoContext, opts: { board?: string }): Reco
     actions: {
       startDev: devScript ? { label: "Start dev", run: ["nanoflow", "up", "--bg"] } : null,
       stopDev: devScript ? { label: "Stop", run: ["nanoflow", "kill"], confirm: true } : null,
+      pickUp: { label: "Pick up", prompt: "Pick up ticket #{ticket} ({title}) in the worktree at {path}: `nanoflow board set {ticket} in-progress` (if the repo has a board), then read the ticket and plan the work." },
       teardown: { label: "Teardown", run: ["nanoflow", "wt", "remove", "{feature}", "--delete-branch", "--yes"], cwd: "main", confirm: true },
       startTask: { label: "Start", prompt: "Start ticket #{ticket} ({title}) with `nanoflow task start {ticket}`, then read the ticket and plan the work." },
       newTicket: { label: "Create", run: ["nanoflow", "ticket", "new", "{title}"], cwd: "main" },

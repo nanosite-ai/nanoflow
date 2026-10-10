@@ -29,6 +29,10 @@
   "actions": {
     "startDev": null,
     "stopDev": null,
+    "pickUp": {
+      "label": "Pick up",
+      "prompt": "Pick up ticket #{ticket} ({title}) in the worktree at {path}: `nanoflow board set {ticket} in-progress` (if the repo has a board), then read the ticket and plan the work."
+    },
     "teardown": {
       "label": "Teardown",
       "run": [

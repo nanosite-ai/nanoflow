@@ -5,7 +5,7 @@ import { diffSnapshots, mergeLocal } from '../hooks/diff'
 import { stagesOf, statusLine } from '../hooks/progress'
 import { browserEventOf, causeOf, DETAIL_LINES, matchRule, outputDetail, toastFor } from '../hooks/rules'
 import { applyFlowResult, buildFlowQuery, ciRollup, parseWorktreeList, slugFromRemote, ticketNumberOf } from '../hooks/scan'
-import { COLOR, folderUrl, statusColor } from '../hooks/view'
+import { COLOR, folderUrl, isPickable, statusColor } from '../hooks/view'
 
 const wt = (over: Partial<NfWorktree> = {}): NfWorktree => ({
   name: 'repo-712-x',
@@ -110,8 +110,8 @@ describe('config', () => {
   })
 
   test('actions override, and null removes one', () => {
-    const c = mergeConfig({ actions: { startDev: { run: ['ns', 'up', '--bg'] }, startTask: null, bogus: { run: ['x'] } } })
-    expect(c.actions[ACTION.startDev]?.run).toEqual(['ns', 'up', '--bg'])
+    const c = mergeConfig({ actions: { pickUp: { run: ['ns', 'board', 'set', '{ticket}', 'in-progress'] }, startTask: null, bogus: { run: ['x'] } } })
+    expect(c.actions[ACTION.pickUp]?.run).toEqual(['ns', 'board', 'set', '{ticket}', 'in-progress'])
     expect(c.actions[ACTION.startTask]).toBe(undefined)
     expect(Object.keys(c.actions).includes('bogus')).toBe(false)
   })
@@ -145,6 +145,19 @@ describe('scan helpers', () => {
     expect(statusColor('In review')).toBe(COLOR.merged)
     expect(statusColor('Ready')).toBe(COLOR.info)
     expect(statusColor(null)).toBe(COLOR.muted)
+  })
+
+  test('a ticket is up for pickup until it is under way', () => {
+    const ticket = (status: string | null) => ({ number: 7, title: 'x', url: 'u', state: 'OPEN', status, worktree: 'repo-7-x' })
+    expect(isPickable(wt({ ticket: ticket('Ready') }))).toBe(true)
+    expect(isPickable(wt({ ticket: ticket(null) }))).toBe(true)
+    expect(isPickable(wt({ ticket: ticket('In progress') }))).toBe(false)
+    expect(isPickable(wt({ ticket: ticket('In review') }))).toBe(false)
+    expect(isPickable(wt({ ticket: ticket('Done') }))).toBe(false)
+    expect(isPickable(wt({ ticket: ticket('Ready'), pr: { number: 8, url: 'u', state: 'OPEN', ci: 'none', ciUrl: null } }))).toBe(false)
+    expect(isPickable(wt({ ticket: { ...ticket('Ready'), state: 'CLOSED' } }))).toBe(false)
+    expect(isPickable(wt({ ticket: null }))).toBe(false)
+    expect(isPickable(wt({ ticket: ticket('Ready'), isMain: true }))).toBe(false)
   })
 })
 
