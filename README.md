@@ -41,8 +41,8 @@ Claude Code, and turns every ritual into one deterministic command.
 
 - **Your session's worktree is framed and badged**, so you always know where *this* agent is.
 - **Everything is a link**: the ticket, the PR, the failing CI run, each running service, the worktree folder.
-- **Select a worktree for actions**: ▶ Start dev, ■ Stop, 🌐 Open app, 🔀 Open PR, 📋 Copy path, and
-  🧹 Teardown (offered once its PR is merged, and it asks first).
+- **Select a worktree for actions**: ▶ Pick up its ticket (Claude moves it to In progress and plans the
+  work; offered until it's under way), 🌐 Open app, 🔀 Open PR, 📋 Copy path, and 🧹 Teardown (offered once its PR is merged, and it asks first).
 - **Tickets tab**: your board's Ready / In progress / In review columns. ▶ Start a ticket (the agent runs
   the kickoff), jump to the worktree already on it, or create a new one.
 - **Activity tab**: the last 50 moments, linked.

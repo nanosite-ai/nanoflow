@@ -96,8 +96,7 @@ An unknown placeholder is an error in the CLI, so a typo fails loudly instead of
 
 ```json
 "actions": {
-  "startDev":  { "label": "Start dev", "run": ["nanoflow", "up", "--bg"] },
-  "stopDev":   { "label": "Stop", "run": ["nanoflow", "kill"], "confirm": true },
+  "pickUp":    { "label": "Pick up", "prompt": "Pick up ticket #{ticket} ({title}) in the worktree at {path}: `nanoflow board set {ticket} in-progress`, then plan the work." },
   "teardown":  { "label": "Teardown", "run": ["nanoflow", "wt", "remove", "{feature}", "--delete-branch", "--yes"], "cwd": "main", "confirm": true },
   "startTask": { "label": "Start", "prompt": "Start ticket #{ticket} ({title}) with `nanoflow task start {ticket}`, then plan the work." },
   "newTicket": { "label": "Create", "run": ["nanoflow", "ticket", "new", "{title}"], "cwd": "main" }
@@ -105,7 +104,8 @@ An unknown placeholder is an error in the CLI, so a typo fails loudly instead of
 ```
 
 `run` runs on your machine (no shell) in the selected worktree, or the main checkout with `"cwd": "main"`.
-`prompt` hands the work to Claude instead. `confirm` asks first. `null` removes a button.
+`prompt` hands the work to Claude instead.
+`pickUp` shows on a worktree whose ticket isn't In progress, In review or Done yet and has no PR. `confirm` asks first. `null` removes a button.
 
 ## A full example
 

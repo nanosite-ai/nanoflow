@@ -139,7 +139,7 @@
     },
     "actions": {
       "type": "object",
-      "propertyNames": { "enum": ["startDev", "stopDev", "teardown", "startTask", "newTicket"] },
+      "propertyNames": { "enum": ["pickUp", "teardown", "startTask", "newTicket"] },
       "additionalProperties": {
         "oneOf": [
           { "type": "null" },

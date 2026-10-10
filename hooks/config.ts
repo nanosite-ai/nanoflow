@@ -44,8 +44,7 @@ export type NfAction = {
 }
 
 export const ACTION = {
-  startDev: 'startDev',
-  stopDev: 'stopDev',
+  pickUp: 'pickUp',
   teardown: 'teardown',
   startTask: 'startTask',
   newTicket: 'newTicket',
@@ -87,6 +86,10 @@ export const DEFAULT_CONFIG: NfConfig = {
   rules: [],
   actions: {
     [ACTION.teardown]: { label: 'Teardown', run: ['git', 'worktree', 'remove', '{path}'], cwd: 'main', confirm: true },
+    [ACTION.pickUp]: {
+      label: 'Pick up',
+      prompt: 'Pick up ticket #{ticket} ({title}) in the worktree at {path}: move it to In progress, then read the ticket and plan the work.',
+    },
     [ACTION.startTask]: {
       label: 'Start task',
       prompt: 'Start work on ticket #{ticket} ({title}): create a git worktree and a branch for it, then outline the plan.',

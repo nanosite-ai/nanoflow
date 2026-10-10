@@ -84,8 +84,7 @@ const config = {
   poll: { localSeconds: 5, githubSeconds: 60 },
   // The pane's buttons run argv directly, so they call node + the CLI (no .cmd shims on Windows).
   actions: {
-    startDev: { label: "Start dev", run: [process.execPath, nanoflowBin(), "up", "--bg"] },
-    stopDev: { label: "Stop", run: [process.execPath, nanoflowBin(), "kill"], confirm: true },
+    pickUp: { label: "Pick up", prompt: "Pick up ticket #{ticket} ({title}) in the worktree at {path}: `nf board set {ticket} in-progress`." },
     teardown: { label: "Teardown", run: [process.execPath, nanoflowBin(), "wt", "remove", "{feature}", "--delete-branch", "--yes"], cwd: "main", confirm: true },
     startTask: { label: "Start", prompt: "Start ticket #{ticket} ({title}) with `nf task start {ticket}`." },
     newTicket: { label: "Create", run: [process.execPath, nanoflowBin(), "ticket", "new", "{title}"], cwd: "main" },
