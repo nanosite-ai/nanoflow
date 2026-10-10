@@ -82,3 +82,50 @@ export const browserEventOf = (tool: string, input: Readonly<Record<string, unkn
   if (action === 'take_screenshot') return { kind: 'screenshot', file: typeof input.filename === 'string' ? input.filename : null }
   return null
 }
+
+// ─── a failed command's output ───────────────────────────────────────────────────────────────────
+
+/** Lines that name what actually went wrong, most telling first. */
+const CAUSE_PATTERNS: readonly RegExp[] = [
+  /is not recognized as an internal or external command|command not found|: not found$/i,
+  /\b(EADDRINUSE|EACCES|EPERM|EBUSY|ENOENT|ECONNREFUSED)\b|address already in use/i,
+  /cannot find module|module not found|error TS\d+|\b\w*Error: /i,
+]
+
+/** A headline a CLI prints for a failure: `✖ build failed:`, `error: …`, `fatal: …`. */
+const HEADLINE = /^(✖|✗|×|❌|error\b|fatal\b|ERR!)/i
+
+/** npm's closing boilerplate: true but never the cause. */
+const NPM_NOISE = /^npm (error|ERR!) (code|path|workspace|location|command|errno|Lifecycle script|A complete log|$)|^npm (error|ERR!)\s*$|^npm (error|ERR!) command failed/i
+
+const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g
+
+const linesOf = (output: string): string[] =>
+  output.replace(ANSI, '').split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+
+/**
+ * The one line worth a toast from a failed command's output: the headline and the cause it names
+ * (`build of x failed: 'tsc' is not recognized…`), not npm's trailing `npm error command …`.
+ * Falls back to the last line.
+ */
+export const causeOf = (output: string): string => {
+  const lines = linesOf(output)
+  if (lines.length === 0) return ''
+  const meaningful = lines.filter(l => !NPM_NOISE.test(l))
+  const cause = CAUSE_PATTERNS.map(p => meaningful.find(l => p.test(l))).find(Boolean)
+  const headline = meaningful.find(l => HEADLINE.test(l))
+  const tidy = (l: string): string => l.replace(HEADLINE, '').replace(/^[\s:]+/, '').replace(/[,:]$/, '')
+  if (headline && cause && headline !== cause) return `${tidy(headline)}: ${tidy(cause)}`
+  return tidy(cause ?? headline ?? meaningful.at(-1) ?? lines.at(-1)!)
+}
+
+/** Lines of a command's output kept on its activity entry. */
+export const DETAIL_LINES = 200
+
+/** stdout then stderr, without colors, capped to the last DETAIL_LINES lines. */
+export const outputDetail = (stdout: string, stderr: string): string => {
+  const lines = [stdout, stderr].map(s => s.replace(ANSI, '').trimEnd()).filter(Boolean).join('\n').split(/\r?\n/)
+  return lines.length > DETAIL_LINES
+    ? [`… ${lines.length - DETAIL_LINES} earlier lines not kept`, ...lines.slice(-DETAIL_LINES)].join('\n')
+    : lines.join('\n')
+}
