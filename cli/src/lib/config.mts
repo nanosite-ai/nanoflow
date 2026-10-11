@@ -50,13 +50,20 @@ export type TicketRefMode = (typeof TICKET_REF_MODES)[number];
 /** The branch pattern a key pattern implies: `<key>-` at the start or after a slash. */
 export const branchPatternFor = (keyPattern: string): string => `(?:^|/)(${keyPattern})-`;
 
+/** Where the tickets live. PRs and CI are always GitHub's. */
+export const TRACKERS = ["github", "jira"] as const;
+export type Tracker = (typeof TRACKERS)[number];
+
+/** A ticket key per tracker, unless ticket.keyPattern says otherwise. */
+const KEY_PATTERNS: Record<Tracker, string> = { github: "\\d+", jira: "[A-Z][A-Z0-9]+-\\d+" };
+
 export interface FlowConfig {
   mainBranch: string;
   ticket: {
-    /** True: tickets are GitHub issues. False: they live in another tracker (Jira, Linear…), so nanoflow
-     *  never reads, creates, comments on or moves them; it only names branches and links to them. */
-    github: boolean;
-    /** Regex for one ticket key: `\d+` for GitHub issues, e.g. `ED-\d+` for Jira. */
+    /** "github": GitHub issues (and a Projects board). "jira": Jira tickets, which nanoflow doesn't read,
+     *  create, comment on or move; it names branches and PRs after them and links to them. */
+    tracker: Tracker;
+    /** Regex for one ticket key: `\d+` for GitHub issues, `[A-Z][A-Z0-9]+-\d+` for Jira. */
     keyPattern: string;
     /** First capture group = the ticket key, read from the branch. Default: built from keyPattern. */
     branchPattern: string;
@@ -119,8 +126,8 @@ export interface FlowConfig {
 export const DEFAULT_CONFIG: FlowConfig = {
   mainBranch: "main",
   ticket: {
-    github: true,
-    keyPattern: "\\d+",
+    tracker: "github",
+    keyPattern: KEY_PATTERNS.github,
     branchPattern: "(?:^|/)(\\d+)-",
     types: ["feature", "bug", "chore", "refactor"],
     labels: { type: "", area: "" },
@@ -202,14 +209,18 @@ export const mergeConfig = (raw: unknown): FlowConfig => {
   const pr = sub(r.pr);
   const title = sub(r.title);
   const teardown = sub(r.teardown);
-  const github = bool(ticket.github, d.ticket.github);
-  const rawKey = str(ticket.keyPattern, d.ticket.keyPattern);
-  const keyPattern = validRegex(rawKey) ? rawKey : d.ticket.keyPattern;
+  // `ticket.github: false` is the 0.1.x plugin's way of saying the tickets aren't GitHub issues.
+  const tracker: Tracker = (TRACKERS as readonly unknown[]).includes(ticket.tracker)
+    ? (ticket.tracker as Tracker)
+    : ticket.github === false ? "jira" : d.ticket.tracker;
+  const github = tracker === "github";
+  const rawKey = str(ticket.keyPattern, KEY_PATTERNS[tracker]);
+  const keyPattern = validRegex(rawKey) ? rawKey : KEY_PATTERNS[tracker];
   const pattern = str(ticket.branchPattern, branchPatternFor(keyPattern));
   return {
     mainBranch: str(r.mainBranch, d.mainBranch),
     ticket: {
-      github,
+      tracker,
       keyPattern,
       branchPattern: validRegex(pattern) ? pattern : branchPatternFor(keyPattern),
       ...(typeof ticket.urlTemplate === "string" ? { urlTemplate: ticket.urlTemplate } : {}),

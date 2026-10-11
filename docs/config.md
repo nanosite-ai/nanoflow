@@ -18,10 +18,10 @@ committing anything).
 |---|---|---|
 | `mainBranch` | `"main"` | The branch PRs merge into; "ahead" counts and PR titles are taken against it. |
 | `github.repo` | from the `origin` remote | `owner/name`, when the remote isn't GitHub or there are several. |
-| `github.board` | none | `{ "owner": "acme", "number": 3 }`: your GitHub Project (v2). Its ids are looked up once and cached in `.git/nanoflow/board.json`. Ignored when `ticket.github` is `false`. |
+| `github.board` | none | `{ "owner": "acme", "number": 3 }`: your GitHub Project (v2). Its ids are looked up once and cached in `.git/nanoflow/board.json`. Ignored with `ticket.tracker: "jira"`. |
 | `github.board.statuses` | `Backlog`, `Ready`, `In progress`, `In review`, `Done` | Your Status column names per step, e.g. `{ "in-progress": "Doing" }`. |
-| `ticket.github` | `true` | Tickets are GitHub issues. `false`: they live in another tracker (Jira, Linear…); see [Tickets outside GitHub](#tickets-outside-github). |
-| `ticket.keyPattern` | `"\\d+"` | Regex for one ticket key, e.g. `"ED-\\d+"` for Jira. |
+| `ticket.tracker` | `"github"` | Where tickets live: `"github"` (issues) or `"jira"`; see [Tickets in Jira](#tickets-in-jira). |
+| `ticket.keyPattern` | `"\\d+"`; Jira: `"[A-Z][A-Z0-9]+-\\d+"` | Regex for one ticket key, e.g. `"ED-\\d+"`. |
 | `ticket.branchPattern` | `"(?:^\|/)(<keyPattern>)-"` | Regex; its first group is the ticket key in a branch (`feat/712-x` → 712, `fix/ED-712-x` → ED-712). |
 | `ticket.urlTemplate` | GitHub issue URL | Ticket links; `{ticket}` is the key: `"https://acme.atlassian.net/browse/{ticket}"`. |
 | `ticket.types` | `feature`, `bug`, `chore`, `refactor` | What `--type` accepts. |
@@ -94,17 +94,19 @@ Templates in `env`, `worktree`, `title.format` and `actions` take:
 
 In the plugin's `actions`: `{ticket}` (the key) `{ref}` `{title}` `{name}` `{feature}` `{path}` `{branch}` `{pr}` `{mainRoot}`.
 
-## Tickets outside GitHub
+An unknown placeholder is an error in the CLI, so a typo fails loudly instead of writing an empty port.
 
-With `"ticket": { "github": false }` your tickets live in Jira (or Linear, or anything with keys). nanoflow
-never reads, creates, comments on or moves them; it names branches after them and links to them, and PRs and
-CI still come from GitHub.
+## Tickets in Jira
+
+With `"ticket": { "tracker": "jira" }` nanoflow never reads, creates, comments on or moves your tickets: it
+names branches and PRs after their keys and links to them. PRs and CI still come from GitHub. (To have Claude
+read or update the Jira tickets themselves, connect Atlassian's MCP server to Claude Code.)
 
 ```json
 {
   "mainBranch": "develop",
   "ticket": {
-    "github": false,
+    "tracker": "jira",
     "keyPattern": "ED-\\d+",
     "urlTemplate": "https://acme.atlassian.net/browse/{ticket}",
     "types": ["feat", "fix", "chore", "refactor"]
@@ -120,8 +122,8 @@ CI still come from GitHub.
 - `nf pr create` titles the PR `fix(ED-712): …` and links `[ED-712](https://acme.atlassian.net/browse/ED-712)`
   in the body, unless the title or body already names the key.
 - The dashboard shows `🎫 ED-712` with its link; its Tickets tab (GitHub's open issues) stays empty.
-
-An unknown placeholder is an error in the CLI, so a typo fails loudly instead of writing an empty port.
+- `keyPattern` defaults to any Jira key (`[A-Z][A-Z0-9]+-\d+`); narrow it to your project's (`ED-\d+`) so other
+  keys in branch names aren't mistaken for tickets.
 
 ## Pane actions
 

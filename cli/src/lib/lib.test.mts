@@ -70,14 +70,17 @@ describe("slots", () => {
 
 describe("tickets outside GitHub", () => {
   const jira = mergeConfig({
-    ticket: { github: false, keyPattern: "ED-\\d+", urlTemplate: "https://acme.atlassian.net/browse/{ticket}", types: ["feat", "fix", "chore"] },
+    ticket: { tracker: "jira", urlTemplate: "https://acme.atlassian.net/browse/{ticket}", types: ["feat", "fix", "chore"] },
     worktree: { branch: "{type}/{feature}" },
     github: { board: { owner: "acme", number: 3 } },
   });
   const repo = { mainRoot: "/dev/first-react", config: jira } as unknown as RepoContext;
 
   test("keys from branches and from people", () => {
-    expect(jira.ticket.branchPattern).toBe("(?:^|/)(ED-\\d+)-");
+    expect(jira.ticket.branchPattern).toBe("(?:^|/)([A-Z][A-Z0-9]+-\\d+)-");
+    expect(mergeConfig({ ticket: { tracker: "jira", keyPattern: "ED-\\d+" } }).ticket.branchPattern).toBe("(?:^|/)(ED-\\d+)-");
+    expect(mergeConfig({ ticket: { github: false } }).ticket.tracker).toBe("jira"); // 0.1.x spelling
+    expect(mergeConfig({ ticket: { tracker: "trello" } }).ticket.tracker).toBe("github");
     expect(ticketOf(jira, "fix/ED-15914-system-check")).toBe("ED-15914");
     expect(ticketOf(jira, "feat/712-x")).toBe(null);
     expect(parseTicketKey(jira, "ed-15914")).toBe("ED-15914");

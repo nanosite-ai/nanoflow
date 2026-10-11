@@ -48,7 +48,7 @@ export const ticketKeyOf = (config: Pick<NfConfig, 'ticket'>, branch: string | n
   const re = new RegExp(config.ticket.branchPattern)
   const key = (re.exec(branch ?? '') ?? re.exec(name))?.[1]
   if (!key) return null
-  return config.ticket.github ? (Number.isInteger(Number(key)) ? String(Number(key)) : null) : key
+  return config.ticket.tracker === 'github' ? (Number.isInteger(Number(key)) ? String(Number(key)) : null) : key
 }
 
 /** The number inside a key: 712 for "ED-712", 0 when there is none. */

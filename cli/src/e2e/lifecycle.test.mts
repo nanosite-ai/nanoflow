@@ -303,7 +303,7 @@ describe("the task lifecycle", { timeout: 120_000 }, () => {
   });
 });
 
-describe("tickets in Jira (ticket.github: false)", { timeout: 120_000 }, () => {
+describe("tickets in Jira (ticket.tracker: jira)", { timeout: 120_000 }, () => {
   const repo = path.join(ROOT, "web");
   const wt = path.join(ROOT, "web-ED-15914-system-check");
 
@@ -317,7 +317,7 @@ describe("tickets in Jira (ticket.github: false)", { timeout: 120_000 }, () => {
       JSON.stringify({
         mainBranch: "develop",
         github: { repo: "acme/demo", board: { owner: "acme", number: 3 } },
-        ticket: { github: false, keyPattern: "ED-\\d+", urlTemplate: "https://acme.atlassian.net/browse/{ticket}", types: ["feat", "fix", "chore"] },
+        ticket: { tracker: "jira", keyPattern: "ED-\\d+", urlTemplate: "https://acme.atlassian.net/browse/{ticket}", types: ["feat", "fix", "chore"] },
         worktree: { branch: "{type}/{feature}", install: null },
         pr: { ticketRef: "scope" },
       }),
@@ -330,8 +330,8 @@ describe("tickets in Jira (ticket.github: false)", { timeout: 120_000 }, () => {
   });
 
   test("task start <key>: a typed branch, and no GitHub issue calls", () => {
-    expect(nf(repo, "task", "start", "ED-15914").stderr).toContain("pass its title");
-    expect(nf(repo, "task", "start", "--new", "x").stderr).toContain("can't create tickets outside GitHub");
+    expect(nf(repo, "task", "start", "ED-15914").stderr).toContain("pass the title of ED-15914");
+    expect(nf(repo, "task", "start", "--new", "x").stderr).toContain("does not create Jira tickets");
 
     const res = nf(repo, "task", "start", "ed-15914", "--title", "system check polling", "--slug", "system-check", "--type", "fix", "--json");
     expect(res.code, res.stderr).toBe(0);

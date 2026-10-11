@@ -145,7 +145,7 @@ const githubFill = async ($: $, mainRoot: string, trees: NfWorktree[]): Promise<
   const slug = S.config.github.repo ?? slugFromRemote((await runText($, ['git', 'remote', 'get-url', 'origin'], mainRoot)) ?? '')
   if (!slug) return null
   const [owner, name] = slug.split('/')
-  const issues = S.config.ticket.github
+  const issues = S.config.ticket.tracker === 'github'
   const out = await runText($, ['gh', 'api', 'graphql', '-f', `query=${buildFlowQuery(trees, issues)}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '--jq', '.data.repository'], mainRoot)
   const data = parseJson<GqlRepo>(out)
   const board = data ? applyFlowResult(S.config, trees, data) : null

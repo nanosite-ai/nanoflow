@@ -53,19 +53,25 @@ export const ACTION = {
 } as const
 export type NfActionKey = (typeof ACTION)[keyof typeof ACTION]
 
+export const TRACKERS = ['github', 'jira'] as const
+export type NfTracker = (typeof TRACKERS)[number]
+
+/** A ticket key per tracker, unless ticket.keyPattern says otherwise. */
+const KEY_PATTERNS: Record<NfTracker, string> = { github: '\\d+', jira: '[A-Z][A-Z0-9]+-\\d+' }
+
 export type NfConfig = {
   mainBranch: string
   /** Commands that print a provider-contract snapshot as JSON; the built-in git/gh scanner otherwise. */
   provider: { snapshot: string[]; local?: string[] } | null
   ticket: {
-    /** Regex for one ticket key: `\d+` for GitHub issues, e.g. `ED-\d+` for Jira. */
+    /** Where tickets live. "github": read their titles and the open ones with gh. "jira": key + link only. PRs and CI are GitHub's either way. */
+    tracker: NfTracker
+    /** Regex for one ticket key: `\d+` for GitHub issues, `[A-Z][A-Z0-9]+-\d+` for Jira. */
     keyPattern: string
     /** First capture group = the ticket key, read from the branch (then the worktree name). Default: built from keyPattern. */
     branchPattern: string
     /** For trackers other than GitHub Issues, e.g. "https://acme.atlassian.net/browse/{ticket}". */
     urlTemplate?: string
-    /** Tickets are GitHub issues: read their titles and the open ones with gh. False: they live in another tracker (PRs still come from GitHub). */
-    github: boolean
   }
   /** The GitHub repo (default: from the origin remote) and the Project board whose Status column tickets show. */
   github: { repo?: string; board: { owner: string; number: number; active: string[] } | null }
@@ -80,7 +86,7 @@ export type NfConfig = {
 export const DEFAULT_CONFIG: NfConfig = {
   mainBranch: 'main',
   provider: null,
-  ticket: { keyPattern: '\\d+', branchPattern: '(?:^|/)(\\d+)-', github: true },
+  ticket: { tracker: 'github', keyPattern: KEY_PATTERNS.github, branchPattern: '(?:^|/)(\\d+)-' },
   github: { board: null },
   slot: { file: '.worktree.json', key: 'slot', mainSlot: 0 },
   host: 'localhost',
@@ -117,7 +123,11 @@ export const mergeConfig = (raw: unknown): NfConfig => {
     : null
   const str = (v: unknown, fallback: string): string => (typeof v === 'string' && v !== '' ? v : fallback)
   const num = (v: unknown, fallback: number, min = 0): number => (typeof v === 'number' && v >= min ? v : fallback)
-  const keyPattern = typeof ticket.keyPattern === 'string' && isValidRegex(ticket.keyPattern) ? ticket.keyPattern : d.ticket.keyPattern
+  // `ticket.github: false` is 0.1.x's way of saying the tickets aren't GitHub issues.
+  const tracker: NfTracker = (TRACKERS as readonly unknown[]).includes(ticket.tracker)
+    ? (ticket.tracker as NfTracker)
+    : ticket.github === false ? 'jira' : d.ticket.tracker
+  const keyPattern = typeof ticket.keyPattern === 'string' && isValidRegex(ticket.keyPattern) ? ticket.keyPattern : KEY_PATTERNS[tracker]
   const github = isRecord(raw.github) ? raw.github : {}
   const board = isRecord(github.board) && typeof github.board.owner === 'string' && typeof github.board.number === 'number' ? github.board : null
   const statuses = board && isRecord(board.statuses) ? board.statuses : {}
@@ -141,10 +151,10 @@ export const mergeConfig = (raw: unknown): NfConfig => {
     mainBranch: str(raw.mainBranch, d.mainBranch),
     provider,
     ticket: {
+      tracker,
       keyPattern,
       branchPattern: typeof ticket.branchPattern === 'string' && isValidRegex(ticket.branchPattern) ? ticket.branchPattern : branchPatternFor(keyPattern),
       ...(typeof ticket.urlTemplate === 'string' ? { urlTemplate: ticket.urlTemplate } : {}),
-      github: typeof ticket.github === 'boolean' ? ticket.github : d.ticket.github,
     },
     github: {
       ...(typeof github.repo === 'string' ? { repo: github.repo } : {}),
@@ -185,7 +195,7 @@ export const starterConfig = (found: { hasSlotFile: boolean; mainBranch: string;
   const config = {
     $schema: 'https://raw.githubusercontent.com/nanosite-ai/nanoflow/main/nanoflow.schema.json',
     mainBranch: found.mainBranch,
-    ticket: { branchPattern: DEFAULT_CONFIG.ticket.branchPattern, github: true },
+    ticket: { tracker: 'github', branchPattern: DEFAULT_CONFIG.ticket.branchPattern },
     ...(found.hasSlotFile ? { slot: DEFAULT_CONFIG.slot } : {}),
     services: [{ name: 'app', base: 3000, step: 10, path: '/', open: true }],
     rules,

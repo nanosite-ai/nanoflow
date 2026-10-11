@@ -23,11 +23,11 @@ const shortTitleOf = (title: string): string => slugify(title, 3).replace(/-/g, 
 
 /** Create or claim the ticket and set it In progress. Outside GitHub nanoflow can't read the ticket: the title comes from --title / --slug. */
 const claimTicket = (repo: RepoContext, ticketArg: string | undefined, opts: StartOpts): { key: string; title: string } => {
-  if (!repo.config.ticket.github) {
-    if (opts.new) throw new Error(`nanoflow can't create tickets outside GitHub (ticket.github: false): create it in your tracker, then \`nf task start <key> --title "…"\`.`);
+  if (repo.config.ticket.tracker !== "github") {
+    if (opts.new) throw new Error(`nanoflow does not create Jira tickets: create it in Jira, then \`nf task start <key> --title "…"\`.`);
     const key = parseTicketKey(repo.config, ticketArg as string);
     const title = opts.title ?? opts.slug?.replace(/-/g, " ");
-    if (!title) throw new Error(`nanoflow can't read ${key} from your tracker: pass its title, \`nf task start ${key} --title "<short title>"\` (and --slug for the branch).`);
+    if (!title) throw new Error(`nanoflow does not read Jira: pass the title of ${key}, \`nf task start ${key} --title "<short title>"\` (and --slug for the branch).`);
     return { key, title };
   }
   if (opts.new) {
@@ -56,7 +56,7 @@ export const registerTask = (program: Command): void => {
     .option("--title <short>", "short session title, 2–4 words (default: from the issue title; required outside GitHub)")
     .option("--comment <text>", "opening comment on the issue (default: names the branch)")
     .option("--no-install", "skip the worktree's install step")
-    .addHelpText("after", ["", "Examples:", "  nanoflow task start 651", '  nf task start 651 --slug csv-export --title "csv export"', '  nf task start --new "lease expires mid-post" --type bug', '  nf task start ED-712 --title "label overlap" --type fix   (ticket.github: false)'].join("\n"))
+    .addHelpText("after", ["", "Examples:", "  nanoflow task start 651", '  nf task start 651 --slug csv-export --title "csv export"', '  nf task start --new "lease expires mid-post" --type bug', '  nf task start ED-712 --title "label overlap" --type fix   (ticket.tracker: "jira")'].join("\n"))
     .action((issueArg: string | undefined, opts: StartOpts, cmd: Command) => {
       const repo = requireRepo();
       const { config } = repo;
@@ -77,7 +77,7 @@ export const registerTask = (program: Command): void => {
       storeBaseTitle(repo.mainRoot, branch, base);
       applyTitles(config, base);
 
-      if (config.ticket.github) commentIssue(repo, Number(ticket.key), opts.comment ?? `Starting work on \`${branch}\`.`);
+      if (config.ticket.tracker === "github") commentIssue(repo, Number(ticket.key), opts.comment ?? `Starting work on \`${branch}\`.`);
       result({ issue: ticketJson(config, ticket.key), branch, worktree, title: base }, () => success(`ready: cd "${worktree}"`));
     });
 

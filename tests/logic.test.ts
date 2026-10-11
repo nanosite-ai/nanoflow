@@ -127,8 +127,10 @@ describe('scan helpers', () => {
     expect(trees).toEqual([{ path: 'C:/dev/repo', branch: 'main' }, { path: 'C:/dev/repo-712-x', branch: 'feat/712-x' }])
     expect(ticketKeyOf(DEFAULT_CONFIG, 'feat/712-x', '')).toBe('712')
     expect(ticketKeyOf(DEFAULT_CONFIG, 'feat/ads', 'repo-ads')).toBe(null)
-    const jira = mergeConfig({ ticket: { github: false, keyPattern: 'ED-\\d+' } })
+    const jira = mergeConfig({ ticket: { tracker: 'jira' } })
     expect(ticketKeyOf(jira, 'fix/ED-15914-x', '')).toBe('ED-15914')
+    expect(ticketKeyOf(jira, 'feat/712-x', '')).toBe(null)
+    expect(mergeConfig({ ticket: { github: false } }).ticket.tracker).toBe('jira') // 0.1.x spelling
   })
 
   test('CI rollup', () => {

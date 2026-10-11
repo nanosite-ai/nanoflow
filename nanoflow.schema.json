@@ -33,8 +33,9 @@
     "ticket": {
       "type": "object",
       "properties": {
-        "github": { "type": "boolean", "default": true, "description": "Tickets are GitHub issues. false: they live in another tracker (Jira, Linear…); nanoflow names branches and links to them, PRs and CI still come from GitHub" },
-        "keyPattern": { "type": "string", "description": "Regex for one ticket key, e.g. ED-\\d+ for Jira", "default": "\\d+" },
+        "tracker": { "enum": ["github", "jira"], "default": "github", "description": "Where tickets live. jira: nanoflow names branches and PRs by key and links them; PRs and CI still come from GitHub" },
+        "github": { "type": "boolean", "deprecated": true, "description": "0.1.x: false = tickets aren't GitHub issues. Use tracker" },
+        "keyPattern": { "type": "string", "description": "Regex for one ticket key. Default: \\d+ (github), [A-Z][A-Z0-9]+-\\d+ (jira); e.g. ED-\\d+" },
         "branchPattern": { "type": "string", "description": "Regex; first group = the ticket key in a branch. Default: (?:^|/)(<keyPattern>)-", "default": "(?:^|/)(\\d+)-" },
         "urlTemplate": { "type": "string", "description": "Ticket link; {ticket} is the key, e.g. https://acme.atlassian.net/browse/{ticket}" },
         "types": { "type": "array", "items": { "type": "string" } },

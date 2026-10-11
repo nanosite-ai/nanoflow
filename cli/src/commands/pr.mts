@@ -88,7 +88,7 @@ export const registerPr = (program: Command): void => {
         const problems = prTitleProblems(title);
         if (problems.length) throw new Error(`PR title is not a valid Conventional Commit:\n  ${problems.join("\n  ")}\n(pr.conventional: false in nanoflow.json turns this off)`);
       }
-      const link = ticketLine(ref, repo.config.ticket.github ? "" : ticketUrl(repo, t.ticket));
+      const link = ticketLine(ref, repo.config.ticket.tracker === "github" ? "" : ticketUrl(repo, t.ticket));
       let body = opts.bodyFile ? readFileSync(opts.bodyFile, "utf8") : (opts.body ?? defaultPrBody(link, commits));
       if (!bodyNamesTicket(body, ref)) body = `${body.trimEnd()}\n\n${link}\n`;
 

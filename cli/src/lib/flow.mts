@@ -127,7 +127,7 @@ const countLines = (out: string | null): number => (out ? out.split(/\r?\n/).fil
 const localTicketUrl = (repo: RepoContext, key: string): string => {
   const { config } = repo;
   if (config.ticket.urlTemplate) return config.ticket.urlTemplate.replace("{ticket}", key);
-  return config.ticket.github && config.github.repo ? issueUrl(repo, Number(key)) : "";
+  return config.ticket.tracker === "github" && config.github.repo ? issueUrl(repo, Number(key)) : "";
 };
 
 const localWorktree = async (repo: RepoContext, wt: Worktree): Promise<FlowWorktree> => {
@@ -237,7 +237,7 @@ export const applyFlowResult = (repo: RepoContext, trees: FlowWorktree[], data: 
 
 const withGithub = async (repo: RepoContext, trees: FlowWorktree[]): Promise<FlowTicket[] | null> => {
   const [owner, name] = repoSlug(repo).split("/");
-  const issues = repo.config.ticket.github;
+  const issues = repo.config.ticket.tracker === "github";
   const out = await tryRunAsync("gh", ["api", "graphql", "-f", `query=${buildFlowQuery(trees, issues)}`, "-F", `owner=${owner}`, "-F", `name=${name}`, "--jq", ".data.repository"]);
   if (!out) {
     warn("GitHub read failed (offline, not logged in, or rate-limited): showing local data only");

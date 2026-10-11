@@ -40,7 +40,7 @@ export const currentTask = (cwd = process.cwd()): CurrentTask => {
 export const advanceTask = (t: CurrentTask, pr: number, status: Status, merged = false): string => {
   const title = withPr(t.base, pr, merged);
   applyTitles(t.repo.config, title);
-  if (t.repo.config.ticket.github) setBoardStatus(t.repo, Number(t.ticket), status);
+  if (t.repo.config.ticket.tracker === "github") setBoardStatus(t.repo, Number(t.ticket), status);
   return title;
 };
 
@@ -48,6 +48,6 @@ export const advanceTask = (t: CurrentTask, pr: number, status: Status, merged =
 export const boardNote = (repo: RepoContext, ticket: string, status: Status): string => {
   const b = repo.config.github.board;
   const ref = ticketRef(repo.config, ticket);
-  if (!repo.config.ticket.github) return `${ref}: tracked outside GitHub, move it there`;
+  if (repo.config.ticket.tracker !== "github") return `${ref}: tracked outside GitHub, move it there`;
   return b ? `${ref} → ${b.statuses[status]}` : `${ref}: no board configured, nothing to move`;
 };

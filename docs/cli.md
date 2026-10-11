@@ -67,7 +67,7 @@ Examples:
   nanoflow task start 651
   nf task start 651 --slug csv-export --title "csv export"
   nf task start --new "lease expires mid-post" --type bug
-  nf task start ED-712 --title "label overlap" --type fix   (ticket.github: false)
+  nf task start ED-712 --title "label overlap" --type fix   (ticket.tracker: "jira")
 ```
 
 ### nanoflow task pr
