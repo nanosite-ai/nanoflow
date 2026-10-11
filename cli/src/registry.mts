@@ -7,6 +7,7 @@ import { registerStack } from "./commands/stack.mjs";
 import { registerTask, registerTitle } from "./commands/task.mjs";
 import { registerBoard, registerTicket } from "./commands/ticket.mjs";
 import { registerEnv, registerWt } from "./commands/wt.mjs";
+import { registerJira } from "./commands/jira.mjs";
 
 export const VERSION = "0.1.3";
 
@@ -23,6 +24,7 @@ export const buildProgram = (): Command => {
   registerTask(program);
   registerTicket(program);
   registerBoard(program);
+  registerJira(program);
   registerTitle(program);
   registerWt(program);
   registerEnv(program);

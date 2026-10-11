@@ -26,10 +26,8 @@ export const repoSlug = (repo: RepoContext): string => {
 /** `gh <issue|pr|run …> --repo <slug>`, so it works from any cwd (not for `gh api`). */
 export const ghRepo = (repo: RepoContext, args: string[], cwd?: string): string => gh([...args, "--repo", repoSlug(repo)], cwd);
 
-export const issueUrl = (repo: RepoContext, n: number): string =>
-  repo.config.ticket.urlTemplate
-    ? repo.config.ticket.urlTemplate.replace("{ticket}", String(n))
-    : new URL(`/${repoSlug(repo)}/issues/${n}`, "https://github.com").href;
+/** Issue #n on GitHub (ticket links that may point elsewhere: ticketUrl in tickets.mts). */
+export const issueUrl = (repo: RepoContext, n: number): string => new URL(`/${repoSlug(repo)}/issues/${n}`, "https://github.com").href;
 
 // ─── Issues ──────────────────────────────────────────────────────────────────
 

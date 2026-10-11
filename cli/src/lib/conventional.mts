@@ -1,4 +1,5 @@
 // Conventional Commit PR titles, checked before the PR exists so CI never bounces it.
+import type { TicketRefMode } from "./config.mjs";
 
 export const COMMIT_TYPES = ["feat", "fix", "perf", "refactor", "docs", "test", "build", "ci", "chore", "style", "revert"] as const;
 
@@ -35,8 +36,25 @@ export const prTitleProblems = (title: string): string[] => {
 
 export const bodyLinksTicket = (body: string): boolean => BODY_REF_RE.test(body);
 
-/** Append ` (#N)` unless the title already references a ticket. */
-export const withTicketRef = (title: string, ticket: number): string => (TICKET_REF_RE.test(title) ? title.trim() : `${title.trim()} (#${ticket})`);
+/** Whether text names the ticket: `#712` for a GitHub issue (any `#N`, as before), else the key itself. */
+const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const namesTicket = (text: string, ref: string): boolean =>
+  ref.startsWith("#") ? TICKET_REF_RE.test(text) : new RegExp(`(?<![\\w-])${escapeRegex(ref)}(?!\\w)`, "i").test(text);
+
+/**
+ * Name the ticket in a PR title, unless it already does. `ref` is `#712` or `ED-712`.
+ * "suffix": `feat: x (#712)`. "scope": `feat(ED-712): x`, or the suffix when the title already has a scope.
+ */
+export const withTicketRef = (title: string, ref: string, mode: TicketRefMode = "suffix"): string => {
+  const t = title.trim();
+  if (mode === "none" || namesTicket(t, ref)) return t;
+  const parsed = mode === "scope" ? parseTitle(t) : null;
+  if (parsed && !parsed.scope) return `${parsed.type}(${ref})${parsed.breaking ? "!" : ""}: ${parsed.subject}`;
+  return `${t} (${ref})`;
+};
+
+/** Whether a PR body already links the ticket: `Closes #712` for a GitHub issue, else the key anywhere. */
+export const bodyNamesTicket = (body: string, ref: string): boolean => (ref.startsWith("#") ? bodyLinksTicket(body) : namesTicket(body, ref));
 
 /** Default PR title from the branch's commits: the first releasing one (feat/fix/perf), else the first conventional one. */
 export const titleFromCommits = (subjects: string[]): string | null => {

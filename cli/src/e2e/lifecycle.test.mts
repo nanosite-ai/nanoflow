@@ -1,7 +1,7 @@
 // The whole task lifecycle, end to end, through the built CLI: kickoff → worktree on its own ports → the app
 // up and down → checks → PR with screenshots → CI → wrap-up → done → teardown. Runs on a throwaway repo with a
 // bare origin, a real HTTP service, and a fake gh (fake-gh.mjs), so nothing touches GitHub.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,6 +11,8 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(HERE, "..", "..", "bin", "nanoflow.mjs");
 const FAKE_GH = path.join(HERE, "fake-gh.mjs");
+const FAKE_JIRA = path.join(HERE, "fake-jira.mjs");
+const FAKE_ACLI = path.join(HERE, "fake-acli.mjs");
 
 const ROOT = mkdtempSync(path.join(tmpdir(), "nanoflow-e2e-"));
 const MAIN = path.join(ROOT, "demo");
@@ -62,10 +64,16 @@ const FIXTURE_LIST: Fixture[] = [
 /** Never let a test rename the Claude Code session or terminal it runs under. */
 const cleanEnv = (): NodeJS.ProcessEnv => {
   const env = { ...process.env };
-  for (const k of ["CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "CLAUDECODE", "NANOFLOW_GH"]) delete env[k];
+  for (const k of ["CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "CLAUDECODE", "NANOFLOW_GH", "NANOFLOW_ACLI"]) delete env[k];
   return {
     ...env,
+    // Session titles and anything else nanoflow keeps per user go here, never to the real ~/.claude.
+    CLAUDE_CONFIG_DIR: path.join(ROOT, "claude-config"),
     NANOFLOW_GH: FAKE_GH,
+    // acli is "installed" but logged out unless a test logs it in (never the real one on this machine).
+    NANOFLOW_ACLI: FAKE_ACLI,
+    FAKE_ACLI_STATE: path.join(ROOT, "acli-state.json"),
+    FAKE_ACLI_LOG: path.join(ROOT, "acli-log.jsonl"),
     FAKE_GH_LOG: LOG,
     FAKE_GH_FIXTURES: FIXTURES,
     NO_COLOR: "1",
@@ -83,10 +91,11 @@ interface Ran {
   json: () => any; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
-const nf = (cwd: string, ...args: string[]): Ran => {
-  const res = spawnSync(process.execPath, [BIN, ...args], { cwd, env: cleanEnv(), encoding: "utf8", timeout: 90_000 });
+const nfWith = (opts: { env?: NodeJS.ProcessEnv; input?: string }, cwd: string, ...args: string[]): Ran => {
+  const res = spawnSync(process.execPath, [BIN, ...args], { cwd, env: { ...cleanEnv(), ...opts.env }, input: opts.input, encoding: "utf8", timeout: 90_000 });
   return { code: res.status ?? 1, stdout: res.stdout, stderr: res.stderr, json: () => JSON.parse(res.stdout) };
 };
+const nf = (cwd: string, ...args: string[]): Ran => nfWith({}, cwd, ...args);
 
 const git = (cwd: string, ...args: string[]): string => {
   const res = spawnSync("git", args, { cwd, env: cleanEnv(), encoding: "utf8" });
@@ -300,6 +309,193 @@ describe("the task lifecycle", { timeout: 120_000 }, () => {
     expect(res.code).toBe(1);
     expect(res.stderr).toContain("commits on no remote");
     expect(existsSync(dir)).toBe(true);
+  });
+});
+
+describe("tickets in Jira, acli logged out (ticket.tracker: jira)", { timeout: 120_000 }, () => {
+  const repo = path.join(ROOT, "web");
+  const wt = path.join(ROOT, "web-ED-15914-system-check");
+  const wt2 = path.join(ROOT, "web-ED-15915-stale-license-warning-reactivation");
+  const JIRA_LOG = path.join(ROOT, "jira-log.jsonl");
+  let jiraServer: ChildProcess | undefined;
+  let JIRA = "";
+
+  /** The Jira requests since the last read, as "METHOD /path" (plus the body). */
+  let jiraSeen = 0;
+  const jiraCalls = (): { line: string; body?: any }[] => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    const all = existsSync(JIRA_LOG) ? readFileSync(JIRA_LOG, "utf8").split("\n").filter(Boolean) : [];
+    const fresh = all.slice(jiraSeen).map((l) => JSON.parse(l) as { method: string; path: string; body?: unknown });
+    jiraSeen = all.length;
+    return fresh.map((c) => ({ line: `${c.method} ${c.path}`, body: c.body }));
+  };
+
+  beforeAll(async () => {
+    jiraServer = spawn(process.execPath, [FAKE_JIRA, JIRA_LOG], { stdio: ["ignore", "pipe", "inherit"] });
+    const port = await new Promise<string>((resolve) => jiraServer?.stdout?.once("data", (d: Buffer) => resolve(d.toString().trim())));
+    JIRA = `http://127.0.0.1:${port}`;
+
+    const origin = path.join(ROOT, "web.git");
+    git(ROOT, "init", "-q", "--bare", "-b", "develop", origin);
+    mkdirSync(path.join(repo, ".claude"), { recursive: true });
+    git(repo, "init", "-q", "-b", "develop");
+    writeFileSync(
+      path.join(repo, ".claude", "nanoflow.json"),
+      JSON.stringify({
+        mainBranch: "develop",
+        github: { repo: "acme/demo", board: { owner: "acme", number: 3 } },
+        ticket: { tracker: "jira", keyPattern: "ED-\\d+", types: ["feat", "fix", "chore"] },
+        jira: { site: JIRA },
+        worktree: { branch: "{type}/{feature}", install: null },
+        pr: { ticketRef: "scope" },
+      }),
+    );
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "chore: initial");
+    git(repo, "remote", "add", "origin", origin);
+    git(repo, "push", "-q", "-u", "origin", "develop");
+    ghCalls();
+  });
+
+  afterAll(() => {
+    jiraServer?.kill();
+  });
+
+  test("not logged in: task start <key> --title still works, with a typed branch and no GitHub issue calls", () => {
+    expect(nf(repo, "task", "start", "ED-15914").stderr).toContain("Can't read ED-15914 (acli is not logged in");
+    expect(nf(repo, "task", "start", "--new", "x").stderr).toContain("Creating a Jira ticket needs Jira access");
+
+    const res = nf(repo, "task", "start", "ed-15914", "--title", "system check polling", "--slug", "system-check", "--type", "fix", "--json");
+    expect(res.code, res.stderr).toBe(0);
+    expect(res.json()).toMatchObject({ issue: "ED-15914", branch: "fix/ED-15914-system-check", title: "ED-15914 · fix/ED-15914-system-check · system check polling" });
+    expect(existsSync(wt)).toBe(true);
+    expect(ghCalls().filter((c) => c.line.startsWith("issue") || c.line.startsWith("project"))).toEqual([]);
+    expect(jiraCalls()).toEqual([]);
+  });
+
+  test("pr create: the key as the title's scope, the Jira link in the body", () => {
+    writeFileSync(path.join(wt, "poll.mjs"), "export const poll = true;\n");
+    git(wt, "add", "-A");
+    git(wt, "commit", "-q", "-m", "fix: poll the system check");
+    const res = nf(wt, "pr", "create", "--json");
+    expect(res.code, res.stderr).toBe(0);
+    expect(res.json()).toMatchObject({ title: "fix(ED-15914): poll the system check", issue: "ED-15914" });
+    const create = ghCalls().find((c) => c.line.startsWith("pr create"));
+    expect(create?.body).toContain(`[ED-15914](${JIRA}/browse/ED-15914)`);
+    expect(create?.body).not.toContain("Closes #");
+    expect(res.json().ticketNote).toContain("ED-15914: not moved in Jira (acli is not logged in");
+  });
+
+  test("flow --local and summary name the key and link Jira", () => {
+    const flow = nf(repo, "flow", "--json", "--local");
+    expect(flow.code, flow.stderr).toBe(0);
+    const tree = flow.json().worktrees.find((w: { branch: string }) => w.branch === "fix/ED-15914-system-check");
+    expect(tree.ticket).toMatchObject({ number: 15914, key: "ED-15914", url: `${JIRA}/browse/ED-15914` });
+    const summary = nf(wt, "summary", "--what", "x", "--json");
+    expect(summary.json().text).toContain(`[ticket: [ED-15914](${JIRA}/browse/ED-15914)]`);
+  });
+
+});
+
+describe("Jira through acli (the way GitHub goes through gh)", { timeout: 120_000 }, () => {
+  const repo = path.join(ROOT, "app");
+  const wt = path.join(ROOT, "app-ED-15915-stale-license-warning-reactivation");
+  const ACLI_LOG = path.join(ROOT, "acli-log.jsonl");
+  let jiraServer: ChildProcess | undefined;
+  let env: NodeJS.ProcessEnv = {};
+
+  /** The acli calls since the last read, each as its argv joined by spaces. */
+  let acliSeen = 0;
+  const acliCalls = (): string[] => {
+    const all = existsSync(ACLI_LOG) ? readFileSync(ACLI_LOG, "utf8").split("\n").filter(Boolean) : [];
+    const fresh = all.slice(acliSeen).map((l) => (JSON.parse(l) as { args: string[] }).args.join(" "));
+    acliSeen = all.length;
+    return fresh;
+  };
+  const run = (cwd: string, ...args: string[]): Ran => nfWith({ env }, cwd, ...args);
+
+  beforeAll(async () => {
+    jiraServer = spawn(process.execPath, [FAKE_JIRA, path.join(ROOT, "jira-log-acli.jsonl")], { stdio: ["ignore", "pipe", "inherit"] });
+    const port = await new Promise<string>((resolve) => jiraServer?.stdout?.once("data", (d: Buffer) => resolve(d.toString().trim())));
+    const JIRA = `http://127.0.0.1:${port}`;
+    env = { FAKE_ACLI_JIRA: JIRA };
+
+    const origin = path.join(ROOT, "app.git");
+    git(ROOT, "init", "-q", "--bare", "-b", "develop", origin);
+    mkdirSync(path.join(repo, ".claude"), { recursive: true });
+    git(repo, "init", "-q", "-b", "develop");
+    writeFileSync(
+      path.join(repo, ".claude", "nanoflow.json"),
+      JSON.stringify({
+        mainBranch: "develop",
+        github: { repo: "acme/demo" },
+        ticket: { tracker: "jira", keyPattern: "ED-\\d+", types: ["feat", "fix", "chore"] },
+        jira: { site: JIRA },
+        worktree: { branch: "{type}/{feature}", install: null },
+        pr: { ticketRef: "scope" },
+      }),
+    );
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "chore: initial");
+    git(repo, "remote", "add", "origin", origin);
+    git(repo, "push", "-q", "-u", "origin", "develop");
+  });
+
+  afterAll(() => {
+    jiraServer?.kill();
+  });
+
+  test("jira login runs acli's browser login; whoami and doctor then go through acli", () => {
+    const login = run(repo, "jira", "login", "--json");
+    expect(login.code, login.stderr).toBe(0);
+    expect(login.json()).toMatchObject({ user: "e2e@nanoflow.invalid" });
+    expect(acliCalls()).toContain("jira auth login --web");
+    expect(run(repo, "jira", "whoami", "--json").json()).toMatchObject({ user: "e2e@nanoflow.invalid" });
+    expect(run(repo, "doctor", "--json").json().checks.find((c: { name: string }) => c.name === "Jira").ok).toBe(true);
+  });
+
+  test("task start <key>: title from acli, → In Progress through acli, branch comment", () => {
+    expect(run(repo, "task", "start", "ED-15916").stderr).toContain("ED-15916 is Done");
+    expect(run(repo, "task", "start", "ED-99999").stderr).toContain("Issue does not exist");
+    acliCalls();
+    const res = run(repo, "task", "start", "ED-15915", "--type", "fix", "--json");
+    expect(res.code, res.stderr).toBe(0);
+    expect(res.json()).toMatchObject({ issue: "ED-15915", branch: "fix/ED-15915-stale-license-warning-reactivation", ticketNote: "ED-15915 → In Progress" });
+    const calls = acliCalls();
+    expect(calls).toContain("jira workitem view ED-15915 --fields key,summary,status --json");
+    expect(calls).toContain("jira workitem transition --key ED-15915 --status In Progress --yes");
+    expect(calls).toContain("jira workitem comment create --key ED-15915 --body Starting work on branch fix/ED-15915-stale-license-warning-reactivation.");
+  });
+
+  test("flow: titles and statuses from one acli search", () => {
+    acliCalls();
+    const tree = run(repo, "flow", "--json").json().worktrees.find((w: { branch: string }) => w.branch?.startsWith("fix/ED-15915"));
+    expect(tree.ticket).toMatchObject({ key: "ED-15915", title: "Stale license warning after reactivation", status: "In Progress", state: "OPEN" });
+    expect(acliCalls().filter((c) => c.startsWith("jira workitem search"))).toEqual(["jira workitem search --jql key in (ED-15915) --fields key,summary,status --limit 100 --json"]);
+  });
+
+  test("pr create → In Review; task done → Done; a missing transition is reported, not thrown", () => {
+    writeFileSync(path.join(wt, "license.mjs"), "export const fresh = true;\n");
+    git(wt, "add", "-A");
+    git(wt, "commit", "-q", "-m", "fix: clear the stale license warning");
+    const pr = run(wt, "pr", "create", "--json");
+    expect(pr.code, pr.stderr).toBe(0);
+    expect(pr.json().ticketNote).toBe("ED-15915 → In Review");
+    expect(run(wt, "task", "done", "--json").json().ticketNote).toBe("ED-15915 → Done");
+
+    // The worktree reads its own checked-out nanoflow.json first.
+    writeFileSync(path.join(wt, ".claude", "nanoflow.json"), readFileSync(path.join(wt, ".claude", "nanoflow.json"), "utf8").replace('"jira":{', '"jira":{"statuses":{"done":"Shipped"},'));
+    const odd = run(wt, "task", "done", "--json");
+    expect(odd.code, odd.stderr).toBe(0);
+    expect(odd.json().ticketNote).toContain('ED-15915: not moved from Done to "Shipped"');
+  });
+
+  test("ticket new creates the work item through acli and reads its key", () => {
+    acliCalls();
+    const res = run(repo, "ticket", "new", "Export the audit log", "--type", "feat", "--definition", "Admins export the log.", "--json");
+    expect(res.code, res.stderr).toBe(0);
+    expect(res.json().key).toMatch(/^ED-16\d{3}$/);
+    const create = acliCalls().find((c) => c.startsWith("jira workitem create"));
+    expect(create).toContain("--project ED --type Task --summary Export the audit log --description Definition\nAdmins export the log.");
   });
 });
 

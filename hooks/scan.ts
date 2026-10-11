@@ -43,12 +43,16 @@ export const parseWorktreeList = (porcelain: string): GitWorktree[] => {
   return trees
 }
 
-export const ticketNumberOf = (pattern: string, branch: string | null, name: string): number | null => {
-  const re = new RegExp(pattern)
-  const match = re.exec(branch ?? '') ?? re.exec(name)
-  const n = match?.[1] ? Number(match[1]) : NaN
-  return Number.isInteger(n) ? n : null
+/** The ticket key in the branch (then the worktree name): "712", or "ED-712" outside GitHub. */
+export const ticketKeyOf = (config: Pick<NfConfig, 'ticket'>, branch: string | null, name: string): string | null => {
+  const re = new RegExp(config.ticket.branchPattern)
+  const key = (re.exec(branch ?? '') ?? re.exec(name))?.[1]
+  if (!key) return null
+  return config.ticket.tracker === 'github' ? (Number.isInteger(Number(key)) ? String(Number(key)) : null) : key
 }
+
+/** The number inside a key: 712 for "ED-712", 0 when there is none. */
+export const ticketNumber = (key: string): number => Number(/(\d+)(?!.*\d)/.exec(key)?.[1] ?? 0)
 
 export type CheckRun = { status?: string; conclusion?: string | null; state?: string; detailsUrl?: string; targetUrl?: string }
 const FAILING = new Set(['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
@@ -75,8 +79,8 @@ export const serviceUrl = (host: string, port: number, path = '/'): string => {
   return url.href
 }
 
-export const ticketUrl = (config: NfConfig, n: number, githubUrl: string | null): string =>
-  config.ticket.urlTemplate ? fillTemplate(config.ticket.urlTemplate, { ticket: n }) : (githubUrl ?? '')
+export const ticketUrl = (config: NfConfig, key: string | number, githubUrl: string | null): string =>
+  config.ticket.urlTemplate ? fillTemplate(config.ticket.urlTemplate, { ticket: key }) : (githubUrl ?? '')
 
 /** A sibling worktree's own part of its name: "repo-712-x" next to main "repo" → "712-x". */
 export const featureOf = (name: string, mainRoot: string): string => {
@@ -96,12 +100,14 @@ const PR_FIELDS = 'number url state commits(last: 1) { nodes { commit { statusCh
 
 type QueryTree = { ticket: { number: number } | null; branch: string | null; isMain: boolean }
 
-export const buildFlowQuery = (trees: readonly QueryTree[]): string => {
+/** Without GitHub issues (`issues: false`) only the PRs: an `issue(number:)` for a Jira number would fail the query. */
+export const buildFlowQuery = (trees: readonly QueryTree[], issues = true): string => {
   const parts = trees.flatMap((t, i) => [
-    ...(t.ticket ? [`t${i}: issue(number: ${t.ticket.number}) { ${ISSUE_FIELDS} }`] : []),
+    ...(issues && t.ticket ? [`t${i}: issue(number: ${t.ticket.number}) { ${ISSUE_FIELDS} }`] : []),
     ...(t.branch && !t.isMain ? [`p${i}: pullRequests(headRefName: ${JSON.stringify(t.branch)}, first: 1, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { ${PR_FIELDS} } }`] : []),
   ])
-  return `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { open: issues(states: OPEN, first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${ISSUE_FIELDS} } } ${parts.join(' ')} } }`
+  const open = issues ? `open: issues(states: OPEN, first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${ISSUE_FIELDS} } }` : 'id'
+  return `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${open} ${parts.join(' ')} } }`
 }
 
 type GqlIssue = {
@@ -132,6 +138,6 @@ export const applyFlowResult = (config: NfConfig, trees: NfSnapshot['worktrees']
   const worktreeOf = new Map(trees.flatMap(t => (t.ticket ? [[t.ticket.number, t.name] as const] : [])))
   const active = config.github.board?.active ?? null
   return (data.open?.nodes ?? [])
-    .map(r => ({ number: r.number, title: r.title, url: ticketUrl(config, r.number, r.url), state: r.state, status: statusIn(config, r), worktree: worktreeOf.get(r.number) ?? null }))
+    .map(r => ({ number: r.number, key: String(r.number), title: r.title, url: ticketUrl(config, r.number, r.url), state: r.state, status: statusIn(config, r), worktree: worktreeOf.get(r.number) ?? null }))
     .filter(r => active === null || (r.status !== null && active.includes(r.status)))
 }

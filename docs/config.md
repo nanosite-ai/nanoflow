@@ -18,10 +18,15 @@ committing anything).
 |---|---|---|
 | `mainBranch` | `"main"` | The branch PRs merge into; "ahead" counts and PR titles are taken against it. |
 | `github.repo` | from the `origin` remote | `owner/name`, when the remote isn't GitHub or there are several. |
-| `github.board` | none | `{ "owner": "acme", "number": 3 }`: your GitHub Project (v2). Its ids are looked up once and cached in `.git/nanoflow/board.json`. |
+| `github.board` | none | `{ "owner": "acme", "number": 3 }`: your GitHub Project (v2). Its ids are looked up once and cached in `.git/nanoflow/board.json`. Ignored with `ticket.tracker: "jira"`. |
 | `github.board.statuses` | `Backlog`, `Ready`, `In progress`, `In review`, `Done` | Your Status column names per step, e.g. `{ "in-progress": "Doing" }`. |
-| `ticket.branchPattern` | `"(?:^\|/)(\\d+)-"` | Regex; its first group is the ticket number in a branch (`feat/712-x` → 712). |
-| `ticket.urlTemplate` | GitHub issue URL | Ticket links for another tracker: `"https://acme.atlassian.net/browse/APP-{ticket}"`. |
+| `ticket.tracker` | `"github"` | Where tickets live: `"github"` (issues) or `"jira"`; see [Tickets in Jira](#tickets-in-jira). |
+| `jira.site` / `jira.project` | none / the `keyPattern` prefix | The Jira Cloud site (`https://acme.atlassian.net`) and the project new tickets go to. |
+| `jira.statuses` | `Backlog`, `To Do`, `In Progress`, `In Review`, `Done` | Your workflow's status per step, e.g. `{ "in-review": "Code Review" }`. |
+| `jira.issueTypes` | Bug for bug/fix, else Task | Jira issue type per `--type`, e.g. `{ "feat": "Story" }`. |
+| `ticket.keyPattern` | `"\\d+"`; Jira: `"[A-Z][A-Z0-9]+-\\d+"` | Regex for one ticket key, e.g. `"ED-\\d+"`. |
+| `ticket.branchPattern` | `"(?:^\|/)(<keyPattern>)-"` | Regex; its first group is the ticket key in a branch (`feat/712-x` → 712, `fix/ED-712-x` → ED-712). |
+| `ticket.urlTemplate` | GitHub issue URL | Ticket links; `{ticket}` is the key: `"https://acme.atlassian.net/browse/{ticket}"`. |
 | `ticket.types` | `feature`, `bug`, `chore`, `refactor` | What `--type` accepts. |
 | `ticket.labels` | none | Label templates: `{ "type": "type:{type}", "area": "area:{area}" }`. |
 | `ticket.sections` | Definition / Implementation plan / Test plan / Definition of Done; bugs: Symptom / Reproduction / Root cause / Fix / Testing | Body headings for `ticket new`; `--definition`, `--plan`, `--test-plan` fill the first three. |
@@ -33,7 +38,7 @@ committing anything).
 | `env.worktree` | `{}` | Like `export`, but only off the main slot (e.g. a queue prefix that must differ from main's). |
 | `env.files` | `{}` | `{ "apps/api/.env": { "PORT": "{port:api}" } }`: keys written into a new worktree's files. |
 | `worktree.dir` | `"../{repo}-{feature}"` | Where new worktrees go, relative to the main checkout. |
-| `worktree.branch` | `"feat/{feature}"` | A new worktree's branch. |
+| `worktree.branch` | `"feat/{feature}"` | A new worktree's branch. `"{type}/{feature}"` names it by `--type`: `fix/ED-712-x`. |
 | `worktree.copy` | `[".env"]` | Gitignored files copied from the main checkout (shared secrets, shared database). |
 | `worktree.install` | none | Run in a new worktree, e.g. `"npm install"`. |
 | `stack.before` | `[]` | Shell commands `nf up` runs first (e.g. build shared packages). |
@@ -41,9 +46,10 @@ committing anything).
 | `stack.timeoutSeconds` | `180` | How long `nf up` waits for the services to answer. |
 | `checks` | `{}` | `nf check`: `{ "typecheck": "npm run typecheck", "test": "npm test" }`. |
 | `pr.conventional` | `true` | Refuse a PR title that isn't a Conventional Commit. |
+| `pr.ticketRef` | `"suffix"` | Where the PR title names the ticket, when it doesn't already: `"suffix"` `feat: x (#712)`, `"scope"` `feat(ED-712): x`, `"none"`. |
 | `pr.shotsBranch` | `"assets/pr-screenshots"` | Orphan branch for PR screenshots (created on first use). |
 | `title.enabled` | `true` | Rename the Claude Code session and terminal tab at each step. |
-| `title.format` | `"#{ticket} · {branch} · {short}"` | The title. |
+| `title.format` | `"{ref} · {branch} · {short}"` | The title. |
 | `teardown.checklist` | close the browser, delete local screenshots | Printed after every teardown, for what only the agent can do. |
 
 ### Plugin-only fields
@@ -85,12 +91,52 @@ Templates in `env`, `worktree`, `title.format` and `actions` take:
 | `{port:<service>}`, `{origin:<service>}` | that service's port / `http://host:port` on this slot |
 | `{host}` | `host` |
 | `{repo}` | the main checkout's folder name |
-| `{feature}`, `{ticket}`, `{slug}` | the worktree's name `712-site-offline`, and its parts |
-| `{branch}`, `{short}` | in `title.format` |
+| `{feature}`, `{ticket}`, `{slug}` | the worktree's name `712-site-offline` (or `ED-712-site-offline`), and its parts |
+| `{type}` | in `worktree`: the task's `--type`, else the first of `ticket.types` |
+| `{branch}`, `{short}`, `{ref}` | in `title.format`; `{ref}` is the ticket as written: `#712`, or `ED-712` |
 
-In the plugin's `actions`: `{ticket}` `{title}` `{name}` `{feature}` `{path}` `{branch}` `{pr}` `{mainRoot}`.
+In the plugin's `actions`: `{ticket}` (the key) `{ref}` `{title}` `{name}` `{feature}` `{path}` `{branch}` `{pr}` `{mainRoot}`.
 
 An unknown placeholder is an error in the CLI, so a typo fails loudly instead of writing an empty port.
+
+## Tickets in Jira
+
+With `"ticket": { "tracker": "jira" }` tickets are Jira keys (`ED-712`), and nanoflow reads, moves, comments
+on and creates them in Jira the way it does GitHub issues. PRs and CI still come from GitHub.
+
+```json
+{
+  "mainBranch": "develop",
+  "ticket": { "tracker": "jira", "keyPattern": "ED-\\d+", "types": ["feat", "fix", "chore", "refactor"] },
+  "jira": { "site": "https://acme.atlassian.net", "statuses": { "in-review": "Code Review" } },
+  "worktree": { "branch": "{type}/{feature}" },
+  "pr": { "ticketRef": "scope" }
+}
+```
+
+**Log in once per machine.** nanoflow reaches Jira the way it reaches GitHub through `gh`: through
+[acli](https://developer.atlassian.com/cloud/acli/guides/install-acli/), Atlassian's CLI, which keeps the login
+itself. Install it, then run `nf jira login` **in your own terminal** (it runs `acli jira auth login --web`: sign
+in in the browser, then pick your site in the terminal; an agent's shell can't answer that prompt).
+nanoflow never holds a Jira secret. `nf jira whoami` and `nf doctor` show the site and account acli uses; acli
+must be logged in to `jira.site` (`acli jira auth switch` when it has several).
+
+| Step | GitHub issues | Jira |
+|---|---|---|
+| `nf task start ED-712 --type fix` | issue → In progress, comment | reads the title, → In Progress, comments the branch; worktree `../<repo>-ED-712-<slug>`, branch `fix/ED-712-<slug>` |
+| `nf task start --new "…"` / `nf ticket new "…"` | creates the issue | creates it in `jira.project` (issue type from `jira.issueTypes`: Bug for bug/fix, else Task) |
+| `nf pr create` | `… (#712)` + `Closes #712`, → In review | `fix(ED-712): …` + a link to the ticket, comments the PR link, → In Review |
+| `nf task done` | → Done | → Done |
+| `nf flow`, the dashboard | titles, columns | titles and workflow status; the Tickets tab (GitHub's open issues) stays empty |
+
+- A move goes through whichever transition leads to the status `jira.statuses` names for the step (defaults:
+  `To Do`, `In Progress`, `In Review`, `Done`). A workflow without one is reported, not an error.
+- Not logged in, nothing breaks: `nf task start ED-712 --title "…"` still names the worktree, branch and PR,
+  and tells you each move it couldn't make.
+- `keyPattern` defaults to any Jira key (`[A-Z][A-Z0-9]+-\d+`); narrow it to your project's (`ED-\d+`) so other
+  keys in branch names aren't mistaken for tickets. It also sets the default `jira.project` (`ED`).
+- The `jira.site` gives ticket links `<site>/browse/ED-712`; `ticket.urlTemplate` overrides them.
+- The dashboard reads Jira through `nanoflow flow --json` (its `provider`, which `nf init` sets up).
 
 ## Pane actions
 

@@ -33,15 +33,37 @@
     "ticket": {
       "type": "object",
       "properties": {
-        "branchPattern": { "type": "string", "description": "Regex; first group = ticket number", "default": "(?:^|/)(\\d+)-" },
-        "urlTemplate": { "type": "string", "description": "e.g. https://acme.atlassian.net/browse/APP-{ticket}" },
-        "github": { "type": "boolean", "default": true, "description": "Plugin: read titles/PRs with gh" },
+        "tracker": { "enum": ["github", "jira"], "default": "github", "description": "Where tickets live. jira: nanoflow names branches and PRs by key and links them; PRs and CI still come from GitHub" },
+        "github": { "type": "boolean", "deprecated": true, "description": "0.1.x: false = tickets aren't GitHub issues. Use tracker" },
+        "keyPattern": { "type": "string", "description": "Regex for one ticket key. Default: \\d+ (github), [A-Z][A-Z0-9]+-\\d+ (jira); e.g. ED-\\d+" },
+        "branchPattern": { "type": "string", "description": "Regex; first group = the ticket key in a branch. Default: (?:^|/)(<keyPattern>)-", "default": "(?:^|/)(\\d+)-" },
+        "urlTemplate": { "type": "string", "description": "Ticket link; {ticket} is the key, e.g. https://acme.atlassian.net/browse/{ticket}" },
         "types": { "type": "array", "items": { "type": "string" } },
         "labels": { "type": "object", "properties": { "type": { "type": "string" }, "area": { "type": "string" } } },
         "sections": {
           "type": "object",
           "properties": { "ticket": { "type": "array", "items": { "type": "string" } }, "bug": { "type": "array", "items": { "type": "string" } } }
         }
+      }
+    },
+    "jira": {
+      "type": "object",
+      "description": "With ticket.tracker jira: where nanoflow reads, moves, comments on and creates tickets. Log in with nf jira login (through acli, Atlassian's CLI)",
+      "properties": {
+        "site": { "type": "string", "description": "e.g. https://acme.atlassian.net; ticket links default to <site>/browse/<key>" },
+        "project": { "type": "string", "description": "Project key new tickets go to. Default: the prefix of ticket.keyPattern (ED for ED-\\d+)" },
+        "statuses": {
+          "type": "object",
+          "description": "Workflow status per lifecycle step. Default: Backlog, To Do, In Progress, In Review, Done",
+          "properties": {
+            "backlog": { "type": "string" },
+            "ready": { "type": "string" },
+            "in-progress": { "type": "string" },
+            "in-review": { "type": "string" },
+            "done": { "type": "string" }
+          }
+        },
+        "issueTypes": { "$ref": "#/$defs/stringMap", "description": "Jira issue type per --type, e.g. { \"feat\": \"Story\" }. Default: Bug for bug/fix, else Task" }
       }
     },
     "slot": {
@@ -82,7 +104,7 @@
       "type": "object",
       "properties": {
         "dir": { "type": "string", "default": "../{repo}-{feature}" },
-        "branch": { "type": "string", "default": "feat/{feature}" },
+        "branch": { "type": "string", "default": "feat/{feature}", "description": "Placeholders: {feature} {ticket} {slug} {type} (from --type), e.g. {type}/{feature}" },
         "copy": { "type": "array", "items": { "type": "string" } },
         "install": { "type": ["string", "null"] }
       }
@@ -98,7 +120,11 @@
     "checks": { "$ref": "#/$defs/stringMap" },
     "pr": {
       "type": "object",
-      "properties": { "conventional": { "type": "boolean" }, "shotsBranch": { "type": "string" } }
+      "properties": {
+        "conventional": { "type": "boolean" },
+        "ticketRef": { "enum": ["suffix", "scope", "none"], "default": "suffix", "description": "Where the PR title names the ticket: feat: x (#12) | feat(ED-12): x | not at all" },
+        "shotsBranch": { "type": "string" }
+      }
     },
     "title": {
       "type": "object",

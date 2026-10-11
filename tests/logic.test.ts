@@ -4,7 +4,7 @@ import { ACTION, DEFAULT_CONFIG, fillTemplate, mergeConfig } from '../hooks/conf
 import { diffSnapshots, mergeLocal } from '../hooks/diff'
 import { stagesOf, statusLine } from '../hooks/progress'
 import { browserEventOf, causeOf, DETAIL_LINES, matchRule, outputDetail, toastFor } from '../hooks/rules'
-import { applyFlowResult, buildFlowQuery, ciRollup, parseWorktreeList, slugFromRemote, ticketNumberOf } from '../hooks/scan'
+import { applyFlowResult, buildFlowQuery, ciRollup, parseWorktreeList, slugFromRemote, ticketKeyOf } from '../hooks/scan'
 import { COLOR, folderUrl, isPickable, statusColor } from '../hooks/view'
 
 const wt = (over: Partial<NfWorktree> = {}): NfWorktree => ({
@@ -125,8 +125,12 @@ describe('scan helpers', () => {
   test('worktree list + ticket numbers', () => {
     const trees = parseWorktreeList('worktree C:/dev/repo\nHEAD 1\nbranch refs/heads/main\n\nworktree C:/dev/repo-712-x\nHEAD 2\nbranch refs/heads/feat/712-x\n')
     expect(trees).toEqual([{ path: 'C:/dev/repo', branch: 'main' }, { path: 'C:/dev/repo-712-x', branch: 'feat/712-x' }])
-    expect(ticketNumberOf(DEFAULT_CONFIG.ticket.branchPattern, 'feat/712-x', '')).toBe(712)
-    expect(ticketNumberOf(DEFAULT_CONFIG.ticket.branchPattern, 'feat/ads', 'repo-ads')).toBe(null)
+    expect(ticketKeyOf(DEFAULT_CONFIG, 'feat/712-x', '')).toBe('712')
+    expect(ticketKeyOf(DEFAULT_CONFIG, 'feat/ads', 'repo-ads')).toBe(null)
+    const jira = mergeConfig({ ticket: { tracker: 'jira' } })
+    expect(ticketKeyOf(jira, 'fix/ED-15914-x', '')).toBe('ED-15914')
+    expect(ticketKeyOf(jira, 'feat/712-x', '')).toBe(null)
+    expect(mergeConfig({ ticket: { github: false } }).ticket.tracker).toBe('jira') // 0.1.x spelling
   })
 
   test('CI rollup', () => {
@@ -181,6 +185,15 @@ describe('github in one query', () => {
     expect(trees[1]?.pr).toEqual({ number: 713, url: 'pr', state: 'OPEN', ci: 'fail', ciUrl: 'run' })
     expect(trees[1]?.ticket?.status).toBe('In progress')
     expect(board.map(t => [t.number, t.worktree])).toEqual([[712, 'repo-712-x']])
+  })
+
+  test('tickets outside GitHub: PRs only, no issue lookups', () => {
+    const trees = [wt({ isMain: true, branch: 'main', ticket: null }), wt({ branch: 'fix/ED-15914-x', ticket: { number: 15914, key: 'ED-15914', title: null, url: '', state: null, status: null, worktree: 'repo-ED-15914-x' } })]
+    const q = buildFlowQuery(trees, false)
+    expect(q.includes('issue(')).toBe(false)
+    expect(q.includes('issues(')).toBe(false)
+    expect(q.includes('p1: pullRequests(headRefName: "fix/ED-15914-x"')).toBe(true)
+    expect(buildFlowQuery([], false)).toContain('{ id  }')
   })
 
   test('repo slug from the origin remote', () => {

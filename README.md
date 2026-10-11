@@ -152,7 +152,7 @@ tested, the same every time.
 
 | Ritual | Command |
 |---|---|
-| Start a task (issue → In progress → worktree → title → comment) | `nf task start <issue#>` · `nf task start --new "<title>"` |
+| Start a task (issue → In progress → worktree → title → comment) | `nf task start <issue#>` · `nf task start --new "<title>"` · Jira: `nf task start ED-712 --type fix` |
 | A ticket for later | `nf ticket new "<title>" --type bug --definition "…"` |
 | Board columns | `nf board list [ready]` · `nf board set <issue#> in-review` |
 | Worktrees | `nf wt create` · `nf wt list` · `nf wt remove <name> --delete-branch` · `nf wt clean` |
@@ -186,7 +186,7 @@ Full reference: [docs/cli.md](docs/cli.md).
 |---|---|
 | **Languages / frameworks** | Any. Services are just a port + a start command. |
 | **Package managers** | npm, pnpm, yarn, bun (detected by `nf init`). |
-| **Tickets** | GitHub Issues + GitHub Projects (v2) boards: titles, columns, PRs, CI. Jira/Linear: links via `ticket.urlTemplate`. |
+| **Tickets** | GitHub Issues + GitHub Projects (v2) boards, or Jira through Atlassian's `acli`, like `gh` (`ticket.tracker: "jira"`, `nf jira login`): titles, statuses, moves, comments, new tickets. PRs and CI from GitHub ([config](docs/config.md#tickets-in-jira)). |
 | **OS** | Windows, macOS, Linux. |
 | **Your own CLI** | Already have a dev CLI? Make it print the [provider contract](docs/provider-contract.md) and the dashboard uses it instead. |
 
@@ -217,7 +217,7 @@ Every field, the placeholders and the pane's action buttons: **[docs/config.md](
 ## 🗺️ Roadmap
 
 - Per-worktree databases (create / drop with the worktree).
-- Linear and Jira ticket titles and status.
+- Linear tickets.
 - Agent-session awareness: which Claude Code session is in which worktree, across terminals.
 
 ## 🤝 Contributing

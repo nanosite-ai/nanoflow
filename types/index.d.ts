@@ -6,7 +6,10 @@ export type NfCi = 'pass' | 'fail' | 'pending' | 'none'
 export type NfService = { name: string; port: number; url: string; isUp: boolean }
 
 export type NfTicket = {
+  /** The issue number; for another tracker's key, the number inside it (712 for ED-712). */
   number: number
+  /** The ticket key: "712", or "ED-712" when tickets live outside GitHub. Absent from older providers. */
+  key?: string
   title: string | null
   url: string
   state: string | null

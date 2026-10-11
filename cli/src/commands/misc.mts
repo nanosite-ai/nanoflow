@@ -1,13 +1,13 @@
 // check, flow, summary: the read-mostly commands that keep an agent's context small.
 import path from "node:path";
 import type { Command } from "commander";
-import { collectFlow, type FlowSnapshot } from "../lib/flow.mjs";
+import { collectFlow, type FlowSnapshot, type FlowTicket } from "../lib/flow.mjs";
 import { prForBranch, PR_STATE } from "../lib/gh.mjs";
 import { c, info, result, warn } from "../lib/output.mjs";
 import { runShellCapture, tail } from "../lib/proc.mjs";
 import { isMainCheckout, requireRepo } from "../lib/repo.mjs";
-import { portOf, slotOf, ticketOf } from "../lib/worktree.mjs";
-import { issueUrl } from "../lib/gh.mjs";
+import { portOf, slotOf } from "../lib/worktree.mjs";
+import { ticketOf, ticketRef, ticketUrl } from "../lib/tickets.mjs";
 
 export const registerCheck = (program: Command): void => {
   program
@@ -37,10 +37,13 @@ export const registerCheck = (program: Command): void => {
     });
 };
 
+/** `#712` for a GitHub issue, else the key (`ED-712`). */
+const ticketLabel = (t: FlowTicket): string => (/^\d+$/.test(t.key) ? `#${t.number}` : t.key);
+
 const renderFlow = (snap: FlowSnapshot): void => {
   for (const wt of snap.worktrees) {
     const mark = wt.isCurrent ? c.magenta("▶") : " ";
-    const ticket = wt.ticket ? `#${wt.ticket.number}${wt.ticket.title ? ` ${wt.ticket.title}` : ""}` : "";
+    const ticket = wt.ticket ? `${ticketLabel(wt.ticket)}${wt.ticket.title ? ` ${wt.ticket.title}` : ""}` : "";
     info(`${mark} ${c.bold(wt.name)}  ${c.cyan(wt.branch ?? "(detached)")}  ${ticket}${wt.ticket?.status ? c.dim(` [${wt.ticket.status}]`) : ""}`);
     const bits = [
       wt.slot !== null ? `slot ${wt.slot}` : "",
@@ -53,7 +56,7 @@ const renderFlow = (snap: FlowSnapshot): void => {
   }
   if (snap.board) {
     info(c.bold("\nTickets"));
-    for (const t of snap.board) info(`  #${t.number} ${t.title ?? ""}${t.status ? c.dim(` [${t.status}]`) : ""}${t.worktree ? c.cyan(` → ${t.worktree}`) : ""}`);
+    for (const t of snap.board) info(`  ${ticketLabel(t)} ${t.title ?? ""}${t.status ? c.dim(` [${t.status}]`) : ""}${t.worktree ? c.cyan(` → ${t.worktree}`) : ""}`);
   }
 };
 
@@ -101,7 +104,7 @@ export const registerSummary = (program: Command): void => {
         worktree: main ? "none" : path.basename(repo.checkoutRoot),
         branch: merged ? `merged→${repo.config.mainBranch}` : repo.branch,
         pr: pr ? link(`#${pr.number}`, pr.url) : "—",
-        ticket: ticket ? link(`#${ticket}`, issueUrl(repo, ticket)) : "—",
+        ticket: ticket ? link(ticketRef(repo.config, ticket), ticketUrl(repo, ticket)) : "—",
         done: merged ? "yes" : "no",
       };
       const lines = [

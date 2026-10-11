@@ -42,7 +42,8 @@ type Worktree = {
 }
 
 type Ticket = {
-  number: number
+  number: number                 // the issue number; for another tracker's key, the number in it (712 for ED-712)
+  key?: string                   // the key: "712", or "ED-712" when tickets live outside GitHub (added later)
   title: string | null
   url: string
   state: string | null           // OPEN | CLOSED

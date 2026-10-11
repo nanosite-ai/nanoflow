@@ -10,9 +10,11 @@ Every command takes `--json` (result on stdout, progress on stderr), `--dry` (pr
 | [`nanoflow task start`](#nanoflow-task-start) | kick off a task: issue → board In progress → worktree on its own ports → session/terminal title → opening comment |
 | [`nanoflow task pr`](#nanoflow-task-pr) | PR is open: title gets `· PR #n`, board → In review (nanoflow pr create does this for you) |
 | [`nanoflow task done`](#nanoflow-task-done) | PR merged: title gets ✓, board → Done; reminds you to tear the worktree down |
-| [`nanoflow ticket new`](#nanoflow-ticket-new) | create an issue (labels + board Status) without starting work on it |
+| [`nanoflow ticket new`](#nanoflow-ticket-new) | create a ticket (labels + board Status; in Jira, in jira.project) without starting work on it |
 | [`nanoflow board set`](#nanoflow-board-set) | set an issue's Status (adds it to the board if missing) |
 | [`nanoflow board list`](#nanoflow-board-list) | board issues in a column (default: ready, i.e. up for pickup) |
+| [`nanoflow jira login`](#nanoflow-jira-login) | log in to the repo's Jira through acli's browser login (acli keeps the login); run it in your own terminal |
+| [`nanoflow jira whoami`](#nanoflow-jira-whoami) | check the Jira login: the site and the account acli is signed in with |
 | [`nanoflow title`](#nanoflow-title) | (re)apply the session + terminal title for the current task branch |
 | [`nanoflow wt create`](#nanoflow-wt-create) | add a worktree + branch for <ticket>-<slug> on the next free port slot; copy and patch shared files; install |
 | [`nanoflow wt list`](#nanoflow-wt-list) | worktrees with their slot, branch and ports |
@@ -24,26 +26,27 @@ Every command takes `--json` (result on stdout, progress on stderr), `--dry` (pr
 | [`nanoflow logs`](#nanoflow-logs) | show (or --follow) a service's log from the `nf up --bg` stack |
 | [`nanoflow kill`](#nanoflow-kill) | stop this checkout's dev processes (the --bg stack + anything running from its dir), or a port's owner |
 | [`nanoflow check`](#nanoflow-check) | run the repo's checks (checks in nanoflow.json); prints one line each, and only the tail of a failure |
-| [`nanoflow pr create`](#nanoflow-pr-create) | push, open the PR (Conventional title + (#N), Closes #N), attach screenshots, board → In review, title |
+| [`nanoflow pr create`](#nanoflow-pr-create) | push, open the PR (Conventional title naming the ticket, body linking it), attach screenshots, board → In review, title |
 | [`nanoflow pr comments`](#nanoflow-pr-comments) | unresolved review threads + conversation comments, condensed; reply in a thread or comment |
 | [`nanoflow shots`](#nanoflow-shots) | upload screenshots to the screenshots branch (pr-<n>-<slug>/) and print or --attach the markdown |
 | [`nanoflow ci`](#nanoflow-ci) | PR checks: status, --watch until done (no poll loops), the failing jobs' log tails, rerun failed |
 | [`nanoflow flow`](#nanoflow-flow) | one snapshot of every worktree (slot, services up, ticket, PR, CI) and the open tickets; the nanoflow mod's provider |
 | [`nanoflow summary`](#nanoflow-summary) | the wrap-up footer for the current task, from live state: worktree, branch, PR, ticket, done, local URL |
 | [`nanoflow init`](#nanoflow-init) | write a starter .claude/nanoflow.json from what the repo has (scripts, lockfile, .env files); --team also offers the mod to teammates |
-| [`nanoflow doctor`](#nanoflow-doctor) | check what nanoflow relies on: git, gh + auth, the config, the repo slug, the board |
+| [`nanoflow doctor`](#nanoflow-doctor) | check what nanoflow relies on: git, gh + auth, the config, the repo slug, the board, the Jira login |
 | [`nanoflow docs`](#nanoflow-docs) | print (or --write docs/cli.md) the reference for every command |
 
 ### nanoflow task start
 
 ```text
-Usage: nanoflow task start [options] [issue]
+Usage: nanoflow task start [options] [ticket]
 
 kick off a task: issue → board In progress → worktree on its own ports → session/terminal title →
 opening comment
 
 Arguments:
-  issue                existing issue number to claim (or --new)
+  ticket               existing issue number to claim (or --new); in Jira, the ticket key, e.g.
+                       ED-712
 
 Options:
   --type <type>        issue type (ticket.types in nanoflow.json; default: the first one)
@@ -56,7 +59,8 @@ Options:
   --parent <issue>     link as a sub-issue of this epic
   --new <title>        create the issue first (takes the ticket options)
   --slug <slug>        worktree/branch slug (default: from the issue title)
-  --title <short>      short session title, 2–4 words (default: from the issue title)
+  --title <short>      short session title, 2–4 words (default: from the ticket title; required for
+                       Jira when not logged in)
   --comment <text>     opening comment on the issue (default: names the branch)
   --no-install         skip the worktree's install step
   -h, --help           display help for command
@@ -65,6 +69,7 @@ Examples:
   nanoflow task start 651
   nf task start 651 --slug csv-export --title "csv export"
   nf task start --new "lease expires mid-post" --type bug
+  nf task start ED-712 --type fix   (ticket.tracker: "jira")
 ```
 
 ### nanoflow task pr
@@ -103,7 +108,7 @@ Examples:
 ```text
 Usage: nanoflow ticket new [options] <title>
 
-create an issue (labels + board Status) without starting work on it
+create a ticket (labels + board Status; in Jira, in jira.project) without starting work on it
 
 Arguments:
   title                plain descriptive title
@@ -162,6 +167,38 @@ Options:
 Examples:
   nf board list
   nf board list in-review --json
+```
+
+### nanoflow jira login
+
+```text
+Usage: nanoflow jira login [options]
+
+log in to the repo's Jira through acli's browser login (acli keeps the login); run it in your own
+terminal
+
+Options:
+  -h, --help  display help for command
+
+Install acli first: https://developer.atlassian.com/cloud/acli/guides/install-acli/
+
+Examples:
+  nf jira login
+```
+
+### nanoflow jira whoami
+
+```text
+Usage: nanoflow jira whoami [options]
+
+check the Jira login: the site and the account acli is signed in with
+
+Options:
+  -h, --help  display help for command
+
+Examples:
+  nf jira whoami
+  nf jira whoami --json
 ```
 
 ### nanoflow title
@@ -378,12 +415,14 @@ Examples:
 ```text
 Usage: nanoflow pr create [options]
 
-push, open the PR (Conventional title + (#N), Closes #N), attach screenshots, board → In review,
-title
+push, open the PR (Conventional title naming the ticket, body linking it), attach screenshots, board
+→ In review, title
 
 Options:
-  --title <title>     PR title; ` (#N)` is appended if missing (default: the first feat/fix commit)
-  --body <markdown>   PR body (Closes #N is appended if missing)
+  --title <title>     PR title; the ticket is added per pr.ticketRef if missing, ` (#N)` by default
+                      (default: the first feat/fix commit)
+  --body <markdown>   PR body (`Closes #N`, or the ticket link outside GitHub, is appended if
+                      missing)
   --body-file <path>  PR body from a file
   --shots <files...>  screenshots to upload to the screenshots branch and embed
   --draft             open as a draft
@@ -524,7 +563,7 @@ Examples:
 ```text
 Usage: nanoflow doctor [options]
 
-check what nanoflow relies on: git, gh + auth, the config, the repo slug, the board
+check what nanoflow relies on: git, gh + auth, the config, the repo slug, the board, the Jira login
 
 Options:
   -h, --help  display help for command

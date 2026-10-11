@@ -4,11 +4,13 @@
 import path from "node:path";
 import type { FlowConfig, Status } from "./config.mjs";
 import { issueUrl, repoSlug } from "./gh.mjs";
+import { jiraClient } from "./jira.mjs";
 import { warn } from "./output.mjs";
 import { tryRunAsync } from "./proc.mjs";
 import type { RepoContext } from "./repo.mjs";
 import { healthUrl, isUp, readStackState } from "./stack.mjs";
-import { listWorktrees, portOf, ticketOf, type Worktree } from "./worktree.mjs";
+import { ticketNumber, ticketOf } from "./tickets.mjs";
+import { listWorktrees, portOf, type Worktree } from "./worktree.mjs";
 
 export const FLOW_VERSION = 1;
 
@@ -23,7 +25,10 @@ export interface FlowService {
 }
 
 export interface FlowTicket {
+  /** The issue number; for another tracker's key, the number inside it (712 for ED-712). */
   number: number;
+  /** The ticket key: "712", or "ED-712" when tickets live outside GitHub. */
+  key: string;
   title: string | null;
   url: string;
   state: string | null;
@@ -119,6 +124,13 @@ const servicesFor = (config: FlowConfig, slot: number): Promise<FlowService[]> =
 const countLines = (out: string | null): number => (out ? out.split(/\r?\n/).filter(Boolean).length : 0);
 
 
+/** The ticket's page without asking gh for the repo (the local scan stays offline); GitHub fills it in later. */
+const localTicketUrl = (repo: RepoContext, key: string): string => {
+  const { config } = repo;
+  if (config.ticket.urlTemplate) return config.ticket.urlTemplate.replace("{ticket}", key);
+  return config.ticket.tracker === "github" && config.github.repo ? issueUrl(repo, Number(key)) : "";
+};
+
 const localWorktree = async (repo: RepoContext, wt: Worktree): Promise<FlowWorktree> => {
   const { config } = repo;
   const isMain = norm(wt.path) === norm(repo.mainRoot);
@@ -130,7 +142,7 @@ const localWorktree = async (repo: RepoContext, wt: Worktree): Promise<FlowWorkt
     slot === null ? Promise.resolve([]) : servicesFor(config, slot),
   ]);
   const stack = readStackState(config, wt.path);
-  const n = isMain ? null : ticketOf(config, branch, wt.meta?.feature, path.basename(wt.path));
+  const key = isMain ? null : ticketOf(config, branch, wt.meta?.feature, path.basename(wt.path));
   const name = path.basename(wt.path);
   return {
     name,
@@ -143,7 +155,7 @@ const localWorktree = async (repo: RepoContext, wt: Worktree): Promise<FlowWorkt
     ahead: Number(ahead ?? 0) || 0,
     services,
     stack: stack ? { apps: stack.apps, startedAt: stack.startedAt } : null,
-    ticket: n === null ? null : { number: n, title: null, url: config.github.repo || config.ticket.urlTemplate ? issueUrl(repo, n) : "", state: null, status: null, worktree: name },
+    ticket: key === null ? null : { number: ticketNumber(key), key, title: null, url: localTicketUrl(repo, key), state: null, status: null, worktree: name },
     pr: null,
   };
 };
@@ -165,14 +177,17 @@ const PROJECT_STATUS = `projectItems(first: 10) { nodes { project { number owner
 const ISSUE_FIELDS = `number title url state ${PROJECT_STATUS}`;
 const PR_FIELDS = `number url state commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) { nodes { __typename ... on CheckRun { status conclusion detailsUrl } ... on StatusContext { state targetUrl } } } } } } }`;
 
-/** The query, with an alias per worktree ticket (t<i>) and per worktree branch (p<i>). */
-export const buildFlowQuery = (trees: readonly FlowWorktree[]): string => {
+/**
+ * The query, with an alias per worktree ticket (t<i>) and per worktree branch (p<i>). Without GitHub issues
+ * (`issues: false`) it asks only for the PRs: an `issue(number:)` for a Jira number would fail the query.
+ */
+export const buildFlowQuery = (trees: readonly FlowWorktree[], issues = true): string => {
   const parts = trees.flatMap((t, i) => [
-    ...(t.ticket ? [`t${i}: issue(number: ${t.ticket.number}) { ${ISSUE_FIELDS} }`] : []),
+    ...(issues && t.ticket ? [`t${i}: issue(number: ${t.ticket.number}) { ${ISSUE_FIELDS} }`] : []),
     ...(t.branch && !t.isMain ? [`p${i}: pullRequests(headRefName: ${JSON.stringify(t.branch)}, first: 1, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { ${PR_FIELDS} } }`] : []),
   ]);
   return `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {
-  open: issues(states: OPEN, first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${ISSUE_FIELDS} } }
+  ${issues ? `open: issues(states: OPEN, first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { ${ISSUE_FIELDS} } }` : "id"}
   ${parts.join("\n  ")}
 } }`;
 };
@@ -217,28 +232,47 @@ export const applyFlowResult = (repo: RepoContext, trees: FlowWorktree[], data: 
   const b = repo.config.github.board;
   const active = b ? ACTIVE.map((s) => b.statuses[s]) : null;
   return (data.open?.nodes ?? [])
-    .map((r) => ({ number: r.number, title: r.title, url: r.url, state: r.state, status: statusIn(repo, r), worktree: worktreeOf.get(r.number) ?? null }))
+    .map((r) => ({ number: r.number, key: String(r.number), title: r.title, url: r.url, state: r.state, status: statusIn(repo, r), worktree: worktreeOf.get(r.number) ?? null }))
     .filter((r) => active === null || (r.status !== null && active.includes(r.status)));
 };
 
 const withGithub = async (repo: RepoContext, trees: FlowWorktree[]): Promise<FlowTicket[] | null> => {
   const [owner, name] = repoSlug(repo).split("/");
-  const out = await tryRunAsync("gh", ["api", "graphql", "-f", `query=${buildFlowQuery(trees)}`, "-F", `owner=${owner}`, "-F", `name=${name}`, "--jq", ".data.repository"]);
+  const issues = repo.config.ticket.tracker === "github";
+  const out = await tryRunAsync("gh", ["api", "graphql", "-f", `query=${buildFlowQuery(trees, issues)}`, "-F", `owner=${owner}`, "-F", `name=${name}`, "--jq", ".data.repository"]);
   if (!out) {
     warn("GitHub read failed (offline, not logged in, or rate-limited): showing local data only");
     return null;
   }
   try {
-    return applyFlowResult(repo, trees, JSON.parse(out) as GqlRepo);
+    const board = applyFlowResult(repo, trees, JSON.parse(out) as GqlRepo);
+    // The tickets list is GitHub's open issues: none to show when tickets live elsewhere.
+    return issues ? board : null;
   } catch {
     return null;
   }
 };
 
-/** Build the snapshot. `local` skips every GitHub call (fast enough to poll every few seconds). */
+/** Jira tickets: their titles and workflow status, in one search. Not logged in (or offline): keys and links only. */
+const withJira = async (repo: RepoContext, trees: FlowWorktree[]): Promise<void> => {
+  const { client } = await jiraClient(repo.config);
+  const keys = trees.flatMap((t) => (t.ticket ? [t.ticket.key] : []));
+  if (!client || !keys.length) return;
+  try {
+    const found = await client.issues(keys);
+    for (const t of trees) {
+      const issue = t.ticket && found.get(t.ticket.key);
+      if (t.ticket && issue) Object.assign(t.ticket, { title: issue.title, status: issue.status, state: issue.state, url: t.ticket.url || issue.url });
+    }
+  } catch (err) {
+    warn(`Jira read failed: ${(err as Error).message}`);
+  }
+};
+
+/** Build the snapshot. `local` skips every GitHub and Jira call (fast enough to poll every few seconds). */
 export const collectFlow = async (repo: RepoContext, args: { cwd: string; local: boolean }): Promise<FlowSnapshot> => {
   const trees = await Promise.all(listWorktrees(repo.config, repo.mainRoot).map((wt) => localWorktree(repo, wt)));
   const current = markCurrent(trees, args.cwd);
-  const board = args.local ? null : await withGithub(repo, trees);
+  const [board] = args.local ? [null] : await Promise.all([withGithub(repo, trees), withJira(repo, trees)]);
   return { version: FLOW_VERSION, generatedAt: new Date().toISOString(), mainRoot: repo.mainRoot.replace(/\\/g, "/"), current, worktrees: trees, board };
 };

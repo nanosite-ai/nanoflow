@@ -20,12 +20,16 @@ const needsShell = (cmd: string): boolean => IS_WIN && SHIMS.has(cmd);
 /** cmd.exe quoting, so a shell call is one command string (args + shell:true is deprecated, DEP0190). */
 export const quoteForCmd = (arg: string): string => (/^[\w./:=@-]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '\\"')}"`);
 
-/** NANOFLOW_GH=<script.mjs> stands in for gh (run with node): the e2e tests' fake, or a wrapper of your own. */
-const ghOverride = (): string | undefined => process.env.NANOFLOW_GH || undefined;
+/**
+ * NANOFLOW_GH=<script.mjs> stands in for gh, NANOFLOW_ACLI for acli (run with node): the e2e tests' fakes, or
+ * a wrapper of your own.
+ */
+const override = (cmd: string): string | undefined =>
+  (cmd === "gh" ? process.env.NANOFLOW_GH : cmd === "acli" ? process.env.NANOFLOW_ACLI : undefined) || undefined;
 
 const prepare = (cmd: string, args: string[]): [string, string[]] => {
-  const fakeGh = cmd === "gh" ? ghOverride() : undefined;
-  if (fakeGh) return [process.execPath, [fakeGh, ...args]];
+  const fake = override(cmd);
+  if (fake) return [process.execPath, [fake, ...args]];
   return needsShell(cmd) ? [[cmd, ...args].map(quoteForCmd).join(" "), []] : [cmd, args];
 };
 
@@ -66,6 +70,17 @@ export const tryRunAsync = (cmd: string, args: string[], opts: { cwd?: string } 
     execFile(file, argv, { cwd: opts.cwd, encoding: "utf8", shell: needsShell(cmd), maxBuffer: MAX_BUFFER }, (err, stdout) =>
       resolve(err ? null : stdout.trim()),
     );
+  });
+
+/** Run a command without blocking: its exit code, stdout and stderr, never a throw (a missing binary is code 127). */
+export const runAsync = (cmd: string, args: string[], opts: { cwd?: string } = {}): Promise<{ code: number; stdout: string; stderr: string }> =>
+  new Promise((resolve) => {
+    const [file, argv] = prepare(cmd, args);
+    execFile(file, argv, { cwd: opts.cwd, encoding: "utf8", shell: needsShell(cmd), maxBuffer: MAX_BUFFER }, (err, stdout, stderr) => {
+      const exit = (err as { code?: unknown } | null)?.code;
+      const code = !err ? 0 : typeof exit === "number" ? exit : 127;
+      resolve({ code, stdout: stdout.trim(), stderr: (stderr || (err && !stdout ? err.message : "")).trim() });
+    });
   });
 
 /** Run a command and keep its stdout whatever the exit code (gh signals failing checks with one). Never throws. */
