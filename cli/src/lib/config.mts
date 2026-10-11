@@ -44,11 +44,23 @@ export interface BoardConfig {
   statuses: Record<Status, string>;
 }
 
+export const TICKET_REF_MODES = ["suffix", "scope", "none"] as const;
+export type TicketRefMode = (typeof TICKET_REF_MODES)[number];
+
+/** The branch pattern a key pattern implies: `<key>-` at the start or after a slash. */
+export const branchPatternFor = (keyPattern: string): string => `(?:^|/)(${keyPattern})-`;
+
 export interface FlowConfig {
   mainBranch: string;
   ticket: {
-    /** First capture group = the ticket number, read from the branch. */
+    /** True: tickets are GitHub issues. False: they live in another tracker (Jira, Linear…), so nanoflow
+     *  never reads, creates, comments on or moves them; it only names branches and links to them. */
+    github: boolean;
+    /** Regex for one ticket key: `\d+` for GitHub issues, e.g. `ED-\d+` for Jira. */
+    keyPattern: string;
+    /** First capture group = the ticket key, read from the branch. Default: built from keyPattern. */
     branchPattern: string;
+    /** Ticket link; {ticket} is the key. */
     urlTemplate?: string;
     /** Issue types `--type` accepts; each becomes a label through `labels.type`. */
     types: string[];
@@ -62,9 +74,9 @@ export interface FlowConfig {
   host: string;
   services: ServiceSpec[];
   worktree: {
-    /** Where new worktrees go, relative to the main checkout. Placeholders: {repo} {feature} {ticket} {slug}. */
+    /** Where new worktrees go, relative to the main checkout. Placeholders: {repo} {feature} {ticket} {slug} {type}. */
     dir: string;
-    /** The branch for a new worktree. */
+    /** The branch for a new worktree, e.g. "{type}/{feature}". */
     branch: string;
     /** Gitignored files copied from the main checkout (e.g. .env files), so secrets are shared. */
     copy: string[];
@@ -91,6 +103,8 @@ export interface FlowConfig {
   pr: {
     /** Refuse a PR title that is not a Conventional Commit. */
     conventional: boolean;
+    /** Where the PR title names the ticket: "suffix" `feat: x (#12)`, "scope" `feat(ED-12): x`, or "none". */
+    ticketRef: TicketRefMode;
     /** Screenshots go to this orphan branch, one folder per PR, out of the merge diff. */
     shotsBranch: string;
   };
@@ -105,6 +119,8 @@ export interface FlowConfig {
 export const DEFAULT_CONFIG: FlowConfig = {
   mainBranch: "main",
   ticket: {
+    github: true,
+    keyPattern: "\\d+",
     branchPattern: "(?:^|/)(\\d+)-",
     types: ["feature", "bug", "chore", "refactor"],
     labels: { type: "", area: "" },
@@ -121,8 +137,8 @@ export const DEFAULT_CONFIG: FlowConfig = {
   env: { export: {}, worktree: {}, files: {} },
   stack: { stateDir: ".nanoflow", before: [], timeoutSeconds: 180 },
   checks: {},
-  pr: { conventional: true, shotsBranch: "assets/pr-screenshots" },
-  title: { enabled: true, format: "#{ticket} · {branch} · {short}" },
+  pr: { conventional: true, ticketRef: "suffix", shotsBranch: "assets/pr-screenshots" },
+  title: { enabled: true, format: "{ref} · {branch} · {short}" },
   teardown: {
     checklist: [
       "close any browser you opened for verification (Playwright MCP: browser_close)",
@@ -178,7 +194,7 @@ export const mergeConfig = (raw: unknown): FlowConfig => {
   const ticket = sub(r.ticket);
   const labels = sub(ticket.labels);
   const sections = sub(ticket.sections);
-  const github = sub(r.github);
+  const gh = sub(r.github);
   const slot = sub(r.slot);
   const wt = sub(r.worktree);
   const env = sub(r.env);
@@ -186,11 +202,16 @@ export const mergeConfig = (raw: unknown): FlowConfig => {
   const pr = sub(r.pr);
   const title = sub(r.title);
   const teardown = sub(r.teardown);
-  const pattern = str(ticket.branchPattern, d.ticket.branchPattern);
+  const github = bool(ticket.github, d.ticket.github);
+  const rawKey = str(ticket.keyPattern, d.ticket.keyPattern);
+  const keyPattern = validRegex(rawKey) ? rawKey : d.ticket.keyPattern;
+  const pattern = str(ticket.branchPattern, branchPatternFor(keyPattern));
   return {
     mainBranch: str(r.mainBranch, d.mainBranch),
     ticket: {
-      branchPattern: validRegex(pattern) ? pattern : d.ticket.branchPattern,
+      github,
+      keyPattern,
+      branchPattern: validRegex(pattern) ? pattern : branchPatternFor(keyPattern),
       ...(typeof ticket.urlTemplate === "string" ? { urlTemplate: ticket.urlTemplate } : {}),
       types: isStrings(ticket.types) && ticket.types.length ? ticket.types : d.ticket.types,
       labels: { type: str(labels.type, d.ticket.labels.type), area: str(labels.area, d.ticket.labels.area) },
@@ -199,7 +220,8 @@ export const mergeConfig = (raw: unknown): FlowConfig => {
         bug: isStrings(sections.bug) ? sections.bug : d.ticket.sections.bug,
       },
     },
-    github: { ...(typeof github.repo === "string" ? { repo: github.repo } : {}), board: boardOf(github.board) },
+    // A board moves GitHub issues: without them there is nothing to move.
+    github: { ...(typeof gh.repo === "string" ? { repo: gh.repo } : {}), board: github ? boardOf(gh.board) : null },
     slot: { file: str(slot.file, d.slot.file), key: str(slot.key, d.slot.key), mainSlot: num(slot.mainSlot, d.slot.mainSlot) },
     host: str(r.host, d.host),
     services: Array.isArray(r.services) ? servicesOf(r.services) : d.services,
@@ -222,7 +244,11 @@ export const mergeConfig = (raw: unknown): FlowConfig => {
       timeoutSeconds: num(stack.timeoutSeconds, d.stack.timeoutSeconds),
     },
     checks: isStringMap(r.checks) ? r.checks : {},
-    pr: { conventional: bool(pr.conventional, d.pr.conventional), shotsBranch: str(pr.shotsBranch, d.pr.shotsBranch) },
+    pr: {
+      conventional: bool(pr.conventional, d.pr.conventional),
+      ticketRef: (TICKET_REF_MODES as readonly unknown[]).includes(pr.ticketRef) ? (pr.ticketRef as TicketRefMode) : d.pr.ticketRef,
+      shotsBranch: str(pr.shotsBranch, d.pr.shotsBranch),
+    },
     title: { enabled: bool(title.enabled, d.title.enabled), format: str(title.format, d.title.format) },
     teardown: { checklist: isStrings(teardown.checklist) ? teardown.checklist : d.teardown.checklist },
   };

@@ -303,6 +303,66 @@ describe("the task lifecycle", { timeout: 120_000 }, () => {
   });
 });
 
+describe("tickets in Jira (ticket.github: false)", { timeout: 120_000 }, () => {
+  const repo = path.join(ROOT, "web");
+  const wt = path.join(ROOT, "web-ED-15914-system-check");
+
+  beforeAll(() => {
+    const origin = path.join(ROOT, "web.git");
+    git(ROOT, "init", "-q", "--bare", "-b", "develop", origin);
+    mkdirSync(path.join(repo, ".claude"), { recursive: true });
+    git(repo, "init", "-q", "-b", "develop");
+    writeFileSync(
+      path.join(repo, ".claude", "nanoflow.json"),
+      JSON.stringify({
+        mainBranch: "develop",
+        github: { repo: "acme/demo", board: { owner: "acme", number: 3 } },
+        ticket: { github: false, keyPattern: "ED-\\d+", urlTemplate: "https://acme.atlassian.net/browse/{ticket}", types: ["feat", "fix", "chore"] },
+        worktree: { branch: "{type}/{feature}", install: null },
+        pr: { ticketRef: "scope" },
+      }),
+    );
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "chore: initial");
+    git(repo, "remote", "add", "origin", origin);
+    git(repo, "push", "-q", "-u", "origin", "develop");
+    ghCalls();
+  });
+
+  test("task start <key>: a typed branch, and no GitHub issue calls", () => {
+    expect(nf(repo, "task", "start", "ED-15914").stderr).toContain("pass its title");
+    expect(nf(repo, "task", "start", "--new", "x").stderr).toContain("can't create tickets outside GitHub");
+
+    const res = nf(repo, "task", "start", "ed-15914", "--title", "system check polling", "--slug", "system-check", "--type", "fix", "--json");
+    expect(res.code, res.stderr).toBe(0);
+    expect(res.json()).toMatchObject({ issue: "ED-15914", branch: "fix/ED-15914-system-check", title: "ED-15914 · fix/ED-15914-system-check · system check polling" });
+    expect(existsSync(wt)).toBe(true);
+    expect(ghCalls().filter((c) => c.line.startsWith("issue") || c.line.startsWith("project"))).toEqual([]);
+  });
+
+  test("pr create: the key as the title's scope, the Jira link in the body", () => {
+    writeFileSync(path.join(wt, "poll.mjs"), "export const poll = true;\n");
+    git(wt, "add", "-A");
+    git(wt, "commit", "-q", "-m", "fix: poll the system check");
+    const res = nf(wt, "pr", "create", "--json");
+    expect(res.code, res.stderr).toBe(0);
+    expect(res.json()).toMatchObject({ title: "fix(ED-15914): poll the system check", issue: "ED-15914" });
+    const create = ghCalls().find((c) => c.line.startsWith("pr create"));
+    expect(create?.body).toContain("[ED-15914](https://acme.atlassian.net/browse/ED-15914)");
+    expect(create?.body).not.toContain("Closes #");
+    expect(res.stderr + res.stdout).not.toContain("no board configured");
+  });
+
+  test("flow --local and summary name the key and link Jira", () => {
+    const flow = nf(repo, "flow", "--json", "--local");
+    expect(flow.code, flow.stderr).toBe(0);
+    const tree = flow.json().worktrees.find((w: { branch: string }) => w.branch === "fix/ED-15914-system-check");
+    expect(tree.ticket).toMatchObject({ number: 15914, key: "ED-15914", url: "https://acme.atlassian.net/browse/ED-15914" });
+    const summary = nf(wt, "summary", "--what", "x", "--json");
+    expect(summary.json().text).toContain("[ticket: [ED-15914](https://acme.atlassian.net/browse/ED-15914)]");
+  });
+});
+
 describe("init on a repo whose package lives in a subfolder", { timeout: 60_000 }, () => {
   test("finds the scripts, adds no app service, and doctor passes", () => {
     const repo = path.join(ROOT, "lib");

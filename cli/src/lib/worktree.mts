@@ -116,36 +116,28 @@ export const slugify = (title: string, maxWords = 4): string => {
 };
 
 export const assertFeature = (feature: string | undefined): string => {
-  if (!feature || !/^[a-z0-9][a-z0-9-]*$/.test(feature)) throw new Error(`Invalid name "${feature ?? ""}". Use lowercase letters, digits and hyphens.`);
+  if (!feature || !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(feature)) throw new Error(`Invalid name "${feature ?? ""}". Use letters, digits and hyphens.`);
   return feature;
 };
 
-/** The ticket number in a branch (or name), per ticket.branchPattern. */
-export const ticketOf = (config: FlowConfig, ...candidates: (string | undefined | null)[]): number | null => {
-  const re = new RegExp(config.ticket.branchPattern);
-  for (const c of candidates) {
-    const n = Number(re.exec(c ?? "")?.[1]);
-    if (Number.isInteger(n) && n > 0) return n;
-  }
-  return null;
+/** "<feature>" → { ticket, slug } when it starts with a ticket key ("712-x", "ED-712-x"). */
+const splitFeature = (config: FlowConfig, feature: string): { ticket: string; slug: string } => {
+  const m = new RegExp(`^(${config.ticket.keyPattern})-(.+)$`).exec(feature);
+  return m ? { ticket: m[1], slug: m[m.length - 1] } : { ticket: "", slug: feature };
 };
 
-/** "<feature>" → { ticket, slug } when it starts with a number. */
-const splitFeature = (feature: string): { ticket: string; slug: string } => {
-  const m = /^(\d+)-(.+)$/.exec(feature);
-  return m ? { ticket: m[1], slug: m[2] } : { ticket: "", slug: feature };
-};
-
-export const nameVars = (repo: RepoContext, feature: string): Record<string, string> => ({
+/** {repo} {feature} {ticket} {slug} {type} for worktree.dir / worktree.branch; type defaults to the first ticket type. */
+export const nameVars = (repo: RepoContext, feature: string, type?: string): Record<string, string> => ({
   repo: path.basename(repo.mainRoot),
   feature,
-  ...splitFeature(feature),
+  ...splitFeature(repo.config, feature),
+  type: type ?? repo.config.ticket.types[0] ?? "",
 });
 
-export const worktreeDirFor = (repo: RepoContext, feature: string): string =>
-  path.resolve(repo.mainRoot, fillTemplate(repo.config.worktree.dir, nameVars(repo, feature)));
+export const worktreeDirFor = (repo: RepoContext, feature: string, type?: string): string =>
+  path.resolve(repo.mainRoot, fillTemplate(repo.config.worktree.dir, nameVars(repo, feature, type)));
 
-export const branchFor = (repo: RepoContext, feature: string): string => fillTemplate(repo.config.worktree.branch, nameVars(repo, feature));
+export const branchFor = (repo: RepoContext, feature: string, type?: string): string => fillTemplate(repo.config.worktree.branch, nameVars(repo, feature, type));
 
 /** A worktree by its feature, folder name, or folder name without the main checkout's prefix. */
 export const findWorktree = (repo: RepoContext, trees: Worktree[], name: string): Worktree | undefined => {
@@ -162,13 +154,13 @@ export const servicesLine = (config: FlowConfig, slot: number): string => {
 };
 
 /** Add the worktree + branch, copy and patch the shared files, record the slot, install. */
-export const createWorktree = (repo: RepoContext, feature: string, opts: { slot?: number; install?: boolean } = {}): string => {
+export const createWorktree = (repo: RepoContext, feature: string, opts: { slot?: number; install?: boolean; type?: string } = {}): string => {
   const { config, mainRoot } = repo;
   assertFeature(feature);
   const slot = opts.slot ?? nextFreeSlot(config, listWorktrees(config, mainRoot));
   if (!Number.isInteger(slot) || slot === config.slot.mainSlot) throw new Error(`Invalid slot "${slot}": slot ${config.slot.mainSlot} is the main checkout.`);
-  const dir = worktreeDirFor(repo, feature);
-  const branch = branchFor(repo, feature);
+  const dir = worktreeDirFor(repo, feature, opts.type);
+  const branch = branchFor(repo, feature, opts.type);
   if (existsSync(dir)) throw new Error(`Target directory already exists: ${dir}`);
 
   step(`Creating worktree "${feature}" (${servicesLine(config, slot)})`);
@@ -181,7 +173,7 @@ export const createWorktree = (repo: RepoContext, feature: string, opts: { slot?
     mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
     copyFileSync(src, path.join(dir, rel));
   }
-  const vars = slotVars(config, slot, nameVars(repo, feature));
+  const vars = slotVars(config, slot, nameVars(repo, feature, opts.type));
   for (const [rel, kv] of Object.entries(config.env.files)) {
     const file = path.join(dir, rel);
     const filled = Object.fromEntries(Object.entries(kv).map(([k, v]) => [k, fillTemplate(v, vars)]));

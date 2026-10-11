@@ -29,8 +29,8 @@ export type NfRule = {
 }
 
 /**
- * One button's command. Placeholders: {ticket} {title} {name} {feature} (the name without the main
- * checkout's folder prefix) {path} {branch} {pr} {mainRoot}.
+ * One button's command. Placeholders: {ticket} (the key: 712 or ED-712) {ref} (#712 or ED-712) {title}
+ * {name} {feature} (the name without the main checkout's folder prefix) {path} {branch} {pr} {mainRoot}.
  */
 export type NfAction = {
   label?: string
@@ -58,11 +58,13 @@ export type NfConfig = {
   /** Commands that print a provider-contract snapshot as JSON; the built-in git/gh scanner otherwise. */
   provider: { snapshot: string[]; local?: string[] } | null
   ticket: {
-    /** First capture group = the ticket number, read from the branch (then the worktree name). */
+    /** Regex for one ticket key: `\d+` for GitHub issues, e.g. `ED-\d+` for Jira. */
+    keyPattern: string
+    /** First capture group = the ticket key, read from the branch (then the worktree name). Default: built from keyPattern. */
     branchPattern: string
     /** For trackers other than GitHub Issues, e.g. "https://acme.atlassian.net/browse/{ticket}". */
     urlTemplate?: string
-    /** Look titles/PRs up with the gh CLI. */
+    /** Tickets are GitHub issues: read their titles and the open ones with gh. False: they live in another tracker (PRs still come from GitHub). */
     github: boolean
   }
   /** The GitHub repo (default: from the origin remote) and the Project board whose Status column tickets show. */
@@ -78,7 +80,7 @@ export type NfConfig = {
 export const DEFAULT_CONFIG: NfConfig = {
   mainBranch: 'main',
   provider: null,
-  ticket: { branchPattern: '(?:^|/)(\\d+)-', github: true },
+  ticket: { keyPattern: '\\d+', branchPattern: '(?:^|/)(\\d+)-', github: true },
   github: { board: null },
   slot: { file: '.worktree.json', key: 'slot', mainSlot: 0 },
   host: 'localhost',
@@ -90,11 +92,11 @@ export const DEFAULT_CONFIG: NfConfig = {
     [ACTION.teardown]: { label: 'Teardown', run: ['git', 'worktree', 'remove', '{path}'], cwd: 'main', confirm: true },
     [ACTION.pickUp]: {
       label: 'Pick up',
-      prompt: 'Pick up ticket #{ticket} ({title}) in the worktree at {path}: move it to In progress, then read the ticket and plan the work.',
+      prompt: 'Pick up ticket {ref} ({title}) in the worktree at {path}: move it to In progress, then read the ticket and plan the work.',
     },
     [ACTION.startTask]: {
       label: 'Start task',
-      prompt: 'Start work on ticket #{ticket} ({title}): create a git worktree and a branch for it, then outline the plan.',
+      prompt: 'Start work on ticket {ref} ({title}): create a git worktree and a branch for it, then outline the plan.',
     },
     [ACTION.newTicket]: { label: 'Create', run: ['gh', 'issue', 'create', '--title', '{title}', '--body', ''], cwd: 'main' },
   },
@@ -115,6 +117,7 @@ export const mergeConfig = (raw: unknown): NfConfig => {
     : null
   const str = (v: unknown, fallback: string): string => (typeof v === 'string' && v !== '' ? v : fallback)
   const num = (v: unknown, fallback: number, min = 0): number => (typeof v === 'number' && v >= min ? v : fallback)
+  const keyPattern = typeof ticket.keyPattern === 'string' && isValidRegex(ticket.keyPattern) ? ticket.keyPattern : d.ticket.keyPattern
   const github = isRecord(raw.github) ? raw.github : {}
   const board = isRecord(github.board) && typeof github.board.owner === 'string' && typeof github.board.number === 'number' ? github.board : null
   const statuses = board && isRecord(board.statuses) ? board.statuses : {}
@@ -138,7 +141,8 @@ export const mergeConfig = (raw: unknown): NfConfig => {
     mainBranch: str(raw.mainBranch, d.mainBranch),
     provider,
     ticket: {
-      branchPattern: typeof ticket.branchPattern === 'string' && isValidRegex(ticket.branchPattern) ? ticket.branchPattern : d.ticket.branchPattern,
+      keyPattern,
+      branchPattern: typeof ticket.branchPattern === 'string' && isValidRegex(ticket.branchPattern) ? ticket.branchPattern : branchPatternFor(keyPattern),
       ...(typeof ticket.urlTemplate === 'string' ? { urlTemplate: ticket.urlTemplate } : {}),
       github: typeof ticket.github === 'boolean' ? ticket.github : d.ticket.github,
     },
@@ -154,6 +158,9 @@ export const mergeConfig = (raw: unknown): NfConfig => {
     actions,
   }
 }
+
+/** The branch pattern a key pattern implies: `<key>-` at the start or after a slash. */
+export const branchPatternFor = (keyPattern: string): string => `(?:^|/)(${keyPattern})-`
 
 const isValidRegex = (source: string): boolean => {
   try {

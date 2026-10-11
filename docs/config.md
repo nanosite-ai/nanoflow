@@ -18,10 +18,12 @@ committing anything).
 |---|---|---|
 | `mainBranch` | `"main"` | The branch PRs merge into; "ahead" counts and PR titles are taken against it. |
 | `github.repo` | from the `origin` remote | `owner/name`, when the remote isn't GitHub or there are several. |
-| `github.board` | none | `{ "owner": "acme", "number": 3 }`: your GitHub Project (v2). Its ids are looked up once and cached in `.git/nanoflow/board.json`. |
+| `github.board` | none | `{ "owner": "acme", "number": 3 }`: your GitHub Project (v2). Its ids are looked up once and cached in `.git/nanoflow/board.json`. Ignored when `ticket.github` is `false`. |
 | `github.board.statuses` | `Backlog`, `Ready`, `In progress`, `In review`, `Done` | Your Status column names per step, e.g. `{ "in-progress": "Doing" }`. |
-| `ticket.branchPattern` | `"(?:^\|/)(\\d+)-"` | Regex; its first group is the ticket number in a branch (`feat/712-x` → 712). |
-| `ticket.urlTemplate` | GitHub issue URL | Ticket links for another tracker: `"https://acme.atlassian.net/browse/APP-{ticket}"`. |
+| `ticket.github` | `true` | Tickets are GitHub issues. `false`: they live in another tracker (Jira, Linear…); see [Tickets outside GitHub](#tickets-outside-github). |
+| `ticket.keyPattern` | `"\\d+"` | Regex for one ticket key, e.g. `"ED-\\d+"` for Jira. |
+| `ticket.branchPattern` | `"(?:^\|/)(<keyPattern>)-"` | Regex; its first group is the ticket key in a branch (`feat/712-x` → 712, `fix/ED-712-x` → ED-712). |
+| `ticket.urlTemplate` | GitHub issue URL | Ticket links; `{ticket}` is the key: `"https://acme.atlassian.net/browse/{ticket}"`. |
 | `ticket.types` | `feature`, `bug`, `chore`, `refactor` | What `--type` accepts. |
 | `ticket.labels` | none | Label templates: `{ "type": "type:{type}", "area": "area:{area}" }`. |
 | `ticket.sections` | Definition / Implementation plan / Test plan / Definition of Done; bugs: Symptom / Reproduction / Root cause / Fix / Testing | Body headings for `ticket new`; `--definition`, `--plan`, `--test-plan` fill the first three. |
@@ -33,7 +35,7 @@ committing anything).
 | `env.worktree` | `{}` | Like `export`, but only off the main slot (e.g. a queue prefix that must differ from main's). |
 | `env.files` | `{}` | `{ "apps/api/.env": { "PORT": "{port:api}" } }`: keys written into a new worktree's files. |
 | `worktree.dir` | `"../{repo}-{feature}"` | Where new worktrees go, relative to the main checkout. |
-| `worktree.branch` | `"feat/{feature}"` | A new worktree's branch. |
+| `worktree.branch` | `"feat/{feature}"` | A new worktree's branch. `"{type}/{feature}"` names it by `--type`: `fix/ED-712-x`. |
 | `worktree.copy` | `[".env"]` | Gitignored files copied from the main checkout (shared secrets, shared database). |
 | `worktree.install` | none | Run in a new worktree, e.g. `"npm install"`. |
 | `stack.before` | `[]` | Shell commands `nf up` runs first (e.g. build shared packages). |
@@ -41,9 +43,10 @@ committing anything).
 | `stack.timeoutSeconds` | `180` | How long `nf up` waits for the services to answer. |
 | `checks` | `{}` | `nf check`: `{ "typecheck": "npm run typecheck", "test": "npm test" }`. |
 | `pr.conventional` | `true` | Refuse a PR title that isn't a Conventional Commit. |
+| `pr.ticketRef` | `"suffix"` | Where the PR title names the ticket, when it doesn't already: `"suffix"` `feat: x (#712)`, `"scope"` `feat(ED-712): x`, `"none"`. |
 | `pr.shotsBranch` | `"assets/pr-screenshots"` | Orphan branch for PR screenshots (created on first use). |
 | `title.enabled` | `true` | Rename the Claude Code session and terminal tab at each step. |
-| `title.format` | `"#{ticket} · {branch} · {short}"` | The title. |
+| `title.format` | `"{ref} · {branch} · {short}"` | The title. |
 | `teardown.checklist` | close the browser, delete local screenshots | Printed after every teardown, for what only the agent can do. |
 
 ### Plugin-only fields
@@ -85,10 +88,38 @@ Templates in `env`, `worktree`, `title.format` and `actions` take:
 | `{port:<service>}`, `{origin:<service>}` | that service's port / `http://host:port` on this slot |
 | `{host}` | `host` |
 | `{repo}` | the main checkout's folder name |
-| `{feature}`, `{ticket}`, `{slug}` | the worktree's name `712-site-offline`, and its parts |
-| `{branch}`, `{short}` | in `title.format` |
+| `{feature}`, `{ticket}`, `{slug}` | the worktree's name `712-site-offline` (or `ED-712-site-offline`), and its parts |
+| `{type}` | in `worktree`: the task's `--type`, else the first of `ticket.types` |
+| `{branch}`, `{short}`, `{ref}` | in `title.format`; `{ref}` is the ticket as written: `#712`, or `ED-712` |
 
-In the plugin's `actions`: `{ticket}` `{title}` `{name}` `{feature}` `{path}` `{branch}` `{pr}` `{mainRoot}`.
+In the plugin's `actions`: `{ticket}` (the key) `{ref}` `{title}` `{name}` `{feature}` `{path}` `{branch}` `{pr}` `{mainRoot}`.
+
+## Tickets outside GitHub
+
+With `"ticket": { "github": false }` your tickets live in Jira (or Linear, or anything with keys). nanoflow
+never reads, creates, comments on or moves them; it names branches after them and links to them, and PRs and
+CI still come from GitHub.
+
+```json
+{
+  "mainBranch": "develop",
+  "ticket": {
+    "github": false,
+    "keyPattern": "ED-\\d+",
+    "urlTemplate": "https://acme.atlassian.net/browse/{ticket}",
+    "types": ["feat", "fix", "chore", "refactor"]
+  },
+  "worktree": { "branch": "{type}/{feature}" },
+  "pr": { "ticketRef": "scope" }
+}
+```
+
+- `nf task start ED-712 --title "label overlap" --type fix` → worktree `../<repo>-ED-712-label-overlap`, branch
+  `fix/ED-712-label-overlap`, title `ED-712 · fix/ED-712-label-overlap · label overlap`. nanoflow can't read the
+  ticket, so `--title` (or `--slug`) is required; `--new`, `ticket new` and `board` are GitHub-only.
+- `nf pr create` titles the PR `fix(ED-712): …` and links `[ED-712](https://acme.atlassian.net/browse/ED-712)`
+  in the body, unless the title or body already names the key.
+- The dashboard shows `🎫 ED-712` with its link; its Tickets tab (GitHub's open issues) stays empty.
 
 An unknown placeholder is an error in the CLI, so a typo fails loudly instead of writing an empty port.
 

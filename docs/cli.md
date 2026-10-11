@@ -24,7 +24,7 @@ Every command takes `--json` (result on stdout, progress on stderr), `--dry` (pr
 | [`nanoflow logs`](#nanoflow-logs) | show (or --follow) a service's log from the `nf up --bg` stack |
 | [`nanoflow kill`](#nanoflow-kill) | stop this checkout's dev processes (the --bg stack + anything running from its dir), or a port's owner |
 | [`nanoflow check`](#nanoflow-check) | run the repo's checks (checks in nanoflow.json); prints one line each, and only the tail of a failure |
-| [`nanoflow pr create`](#nanoflow-pr-create) | push, open the PR (Conventional title + (#N), Closes #N), attach screenshots, board → In review, title |
+| [`nanoflow pr create`](#nanoflow-pr-create) | push, open the PR (Conventional title naming the ticket, body linking it), attach screenshots, board → In review, title |
 | [`nanoflow pr comments`](#nanoflow-pr-comments) | unresolved review threads + conversation comments, condensed; reply in a thread or comment |
 | [`nanoflow shots`](#nanoflow-shots) | upload screenshots to the screenshots branch (pr-<n>-<slug>/) and print or --attach the markdown |
 | [`nanoflow ci`](#nanoflow-ci) | PR checks: status, --watch until done (no poll loops), the failing jobs' log tails, rerun failed |
@@ -37,13 +37,14 @@ Every command takes `--json` (result on stdout, progress on stderr), `--dry` (pr
 ### nanoflow task start
 
 ```text
-Usage: nanoflow task start [options] [issue]
+Usage: nanoflow task start [options] [ticket]
 
 kick off a task: issue → board In progress → worktree on its own ports → session/terminal title →
 opening comment
 
 Arguments:
-  issue                existing issue number to claim (or --new)
+  ticket               existing issue number to claim (or --new); outside GitHub, the ticket key,
+                       e.g. ED-712
 
 Options:
   --type <type>        issue type (ticket.types in nanoflow.json; default: the first one)
@@ -56,7 +57,8 @@ Options:
   --parent <issue>     link as a sub-issue of this epic
   --new <title>        create the issue first (takes the ticket options)
   --slug <slug>        worktree/branch slug (default: from the issue title)
-  --title <short>      short session title, 2–4 words (default: from the issue title)
+  --title <short>      short session title, 2–4 words (default: from the issue title; required
+                       outside GitHub)
   --comment <text>     opening comment on the issue (default: names the branch)
   --no-install         skip the worktree's install step
   -h, --help           display help for command
@@ -65,6 +67,7 @@ Examples:
   nanoflow task start 651
   nf task start 651 --slug csv-export --title "csv export"
   nf task start --new "lease expires mid-post" --type bug
+  nf task start ED-712 --title "label overlap" --type fix   (ticket.github: false)
 ```
 
 ### nanoflow task pr
@@ -378,12 +381,14 @@ Examples:
 ```text
 Usage: nanoflow pr create [options]
 
-push, open the PR (Conventional title + (#N), Closes #N), attach screenshots, board → In review,
-title
+push, open the PR (Conventional title naming the ticket, body linking it), attach screenshots, board
+→ In review, title
 
 Options:
-  --title <title>     PR title; ` (#N)` is appended if missing (default: the first feat/fix commit)
-  --body <markdown>   PR body (Closes #N is appended if missing)
+  --title <title>     PR title; the ticket is added per pr.ticketRef if missing, ` (#N)` by default
+                      (default: the first feat/fix commit)
+  --body <markdown>   PR body (`Closes #N`, or the ticket link outside GitHub, is appended if
+                      missing)
   --body-file <path>  PR body from a file
   --shots <files...>  screenshots to upload to the screenshots branch and embed
   --draft             open as a draft

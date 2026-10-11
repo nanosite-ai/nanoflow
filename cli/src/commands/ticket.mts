@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import { fillTemplate, STATUS, STATUSES, type Status } from "../lib/config.mjs";
-import { createIssue, issueUrl, linkSubIssue, setBoardStatus, boardItems } from "../lib/gh.mjs";
+import { createIssue, linkSubIssue, setBoardStatus, boardItems } from "../lib/gh.mjs";
 import { dryRun, parseIssueNumber } from "../lib/globals.mjs";
 import { c, info, result, success } from "../lib/output.mjs";
 import { requireRepo, type RepoContext } from "../lib/repo.mjs";
+import { requireGithubTickets, ticketUrl } from "../lib/tickets.mjs";
 
 export interface NewTicketOpts {
   type?: string;
@@ -58,13 +59,14 @@ export interface CreatedTicket {
 
 /** Create the issue, label it, link it under --parent, and set its board Status. Shared with `task start`. */
 export const createTicket = (repo: RepoContext, title: string, opts: NewTicketOpts, defaultStatus: Status): CreatedTicket => {
+  requireGithubTickets(repo.config, "Creating a ticket");
   const type = opts.type ?? repo.config.ticket.types[0];
   if (!repo.config.ticket.types.includes(type)) throw new Error(`Unknown type "${type}". Use one of: ${repo.config.ticket.types.join(", ")}.`);
   const status = opts.status ? parseStatus(opts.status) : defaultStatus;
   const number = createIssue(repo, { title, body: bodyFrom(repo, type, opts), labels: labelsFor(repo, type, opts.area) });
   if (opts.parent) linkSubIssue(repo, parseIssueNumber(opts.parent), number);
   setBoardStatus(repo, number, status);
-  return { number, url: issueUrl(repo, number), title, status };
+  return { number, url: ticketUrl(repo, String(number)), title, status };
 };
 
 export const addTicketOptions = (cmd: Command): Command =>
@@ -86,6 +88,7 @@ export const registerTicket = (program: Command): void => {
     .addHelpText("after", '\nExamples:\n  nanoflow ticket new "csv export for orders" --definition "…"\n  nf ticket new "checkout 500 on empty cart" --type bug --status backlog\n  nf ticket new "phase 2" --parent 650 --body-file plan.md')
     .action((title: string, opts: NewTicketOpts, cmd: Command) => {
       const repo = requireRepo();
+      requireGithubTickets(repo.config, "nf ticket new");
       if (dryRun(cmd, `would create "${title}" → ${opts.status}`)) return;
       const created = createTicket(repo, title, opts, STATUS.ready);
       result(created, () => success(`#${created.number} ${created.title} → ${created.status}  ${created.url}`));

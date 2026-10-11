@@ -15,6 +15,7 @@ hand-roll a `gh`/`git` sequence.
 ```bash
 nf task start <issue#>                 # claim an existing issue
 nf task start --new "<plain title>"    # or create it first (--type bug, --definition "…")
+nf task start ED-712 --title "<short>" --type fix   # tickets in Jira etc. (ticket.github: false)
 ```
 
 One command: issue → board **In progress** → worktree `../<repo>-<ticket>-<slug>` on branch

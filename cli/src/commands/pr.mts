@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { Command } from "commander";
 import { STATUS } from "../lib/config.mjs";
-import { bodyLinksTicket, prTitleProblems, titleFromCommits, withTicketRef } from "../lib/conventional.mjs";
+import { bodyNamesTicket, prTitleProblems, titleFromCommits, withTicketRef } from "../lib/conventional.mjs";
 import { gh, ghRepo, prField, prForBranch, PR_STATE, repoSlug, setPrBody } from "../lib/gh.mjs";
 import { commitsSinceMain, fetchMain } from "../lib/git.mjs";
 import { dryRun, parseIssueNumber, tempFile } from "../lib/globals.mjs";
@@ -11,10 +11,14 @@ import { run, runAnyExit, tail, tryRun } from "../lib/proc.mjs";
 import { requireRepo, type RepoContext } from "../lib/repo.mjs";
 import { attachShotsToBody, shotRepoPath, shotsFolder, uploadShots } from "../lib/shots.mjs";
 import { advanceTask, boardNote, currentTask } from "../lib/task.mjs";
+import { ticketJson, ticketRef, ticketUrl } from "../lib/tickets.mjs";
+
+/** The body line that links the ticket: `Closes #712` (GitHub closes it on merge), else `[ED-712](url)`. */
+export const ticketLine = (ref: string, url: string): string => (ref.startsWith("#") ? `Closes ${ref}` : url ? `[${ref}](${url})` : ref);
 
 /** A PR body with the commits as a starting point and the ticket linked. */
-export const defaultPrBody = (ticket: number, commits: string[]): string =>
-  ["## What & why", "", commits.map((s) => `- ${s}`).join("\n") || "_TBD_", "", "## Ticket", "", `Closes #${ticket}`, "", "## Test plan", "", "_TBD_", ""].join("\n");
+export const defaultPrBody = (ticketLink: string, commits: string[]): string =>
+  ["## What & why", "", commits.map((s) => `- ${s}`).join("\n") || "_TBD_", "", "## Ticket", "", ticketLink, "", "## Test plan", "", "_TBD_", ""].join("\n");
 
 /** An explicit PR number, else the current branch's PR. */
 const resolvePr = (repo: RepoContext, prArg: string | undefined): number => {
@@ -62,9 +66,9 @@ export const registerPr = (program: Command): void => {
   const pr = program.command("pr").description("pull requests: create with a valid title + linked ticket, read and answer review comments");
 
   pr.command("create")
-    .description("push, open the PR (Conventional title + (#N), Closes #N), attach screenshots, board → In review, title")
-    .option("--title <title>", "PR title; ` (#N)` is appended if missing (default: the first feat/fix commit)")
-    .option("--body <markdown>", "PR body (Closes #N is appended if missing)")
+    .description("push, open the PR (Conventional title naming the ticket, body linking it), attach screenshots, board → In review, title")
+    .option("--title <title>", "PR title; the ticket is added per pr.ticketRef if missing, ` (#N)` by default (default: the first feat/fix commit)")
+    .option("--body <markdown>", "PR body (`Closes #N`, or the ticket link outside GitHub, is appended if missing)")
     .option("--body-file <path>", "PR body from a file")
     .option("--shots <files...>", "screenshots to upload to the screenshots branch and embed")
     .option("--draft", "open as a draft")
@@ -78,13 +82,15 @@ export const registerPr = (program: Command): void => {
       const commits = commitsSinceMain(cwd, repo.config.mainBranch);
       const rawTitle = opts.title ?? titleFromCommits(commits) ?? commits[0];
       if (!rawTitle) throw new Error("No commits on this branch to take a title from: pass --title.");
-      const title = withTicketRef(rawTitle, t.ticket);
+      const ref = ticketRef(repo.config, t.ticket);
+      const title = withTicketRef(rawTitle, ref, repo.config.pr.ticketRef);
       if (repo.config.pr.conventional) {
         const problems = prTitleProblems(title);
         if (problems.length) throw new Error(`PR title is not a valid Conventional Commit:\n  ${problems.join("\n  ")}\n(pr.conventional: false in nanoflow.json turns this off)`);
       }
-      let body = opts.bodyFile ? readFileSync(opts.bodyFile, "utf8") : (opts.body ?? defaultPrBody(t.ticket, commits));
-      if (!bodyLinksTicket(body)) body = `${body.trimEnd()}\n\nCloses #${t.ticket}\n`;
+      const link = ticketLine(ref, repo.config.ticket.github ? "" : ticketUrl(repo, t.ticket));
+      let body = opts.bodyFile ? readFileSync(opts.bodyFile, "utf8") : (opts.body ?? defaultPrBody(link, commits));
+      if (!bodyNamesTicket(body, ref)) body = `${body.trimEnd()}\n\n${link}\n`;
 
       const existing = prForBranch(repo, t.branch, PR_STATE.open);
       if (existing) throw new Error(`This branch already has an open PR: ${existing.url}`);
@@ -103,7 +109,7 @@ export const registerPr = (program: Command): void => {
         success(`${uploaded.length} screenshot(s) attached`);
       }
       advanceTask(t, number, STATUS.inReview);
-      result({ pr: number, url, title, issue: t.ticket }, () => success(boardNote(repo, t.ticket, STATUS.inReview)));
+      result({ pr: number, url, title, issue: ticketJson(repo.config, t.ticket) }, () => success(boardNote(repo, t.ticket, STATUS.inReview)));
     });
 
   pr.command("comments")

@@ -1,6 +1,6 @@
 // Where the current task stands: ticket → branch → code → checks → PR → CI → merged. Pure.
 import type { NfCheck, NfSnapshot, NfWorktree } from '../types'
-import { truncate } from './diff'
+import { ticketLabel, truncate } from './diff'
 
 export type StageState = 'done' | 'active' | 'fail' | 'todo'
 export type Stage = { key: string; label: string; state: StageState }
@@ -53,6 +53,6 @@ export const statusLine = (args: {
   const extras = [running ? `⏳ ${running}` : '', skill ? `📘 ${skill}` : ''].filter(Boolean).join(' · ')
   const tail = ` │ ${fleetLine(snapshot)}${extras ? ` │ ${extras}` : ''}`
   if (!wt || wt.isMain) return `${wt?.branch ?? 'main'}${tail}`
-  const head = wt.ticket ? `#${wt.ticket.number}${wt.ticket.title ? ` ${truncate(wt.ticket.title, 28)}` : ''}` : wt.name
+  const head = wt.ticket ? `${ticketLabel(wt.ticket)}${wt.ticket.title ? ` ${truncate(wt.ticket.title, 28)}` : ''}` : wt.name
   return `${head} │ ${stageLine(stagesOf(wt, checks))}${tail}`
 }

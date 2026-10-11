@@ -1,11 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { DEFAULT_CONFIG, fillTemplate, mergeConfig } from "./config.mjs";
-import { bodyLinksTicket, prTitleProblems, titleFromCommits, withTicketRef } from "./conventional.mjs";
+import { bodyLinksTicket, bodyNamesTicket, prTitleProblems, titleFromCommits, withTicketRef } from "./conventional.mjs";
 import { applyFlowResult, buildFlowQuery, ciRollup, type FlowWorktree } from "./flow.mjs";
 import { slugFromRemote } from "./gh.mjs";
 import type { RepoContext } from "./repo.mjs";
 import { attachShotsToBody, shotRawUrl, shotsFolder } from "./shots.mjs";
-import { envForSlot, nextFreeSlot, portOf, slotVars, slugify, ticketOf, upsertEnvText } from "./worktree.mjs";
+import { parseTicketKey, ticketNumber, ticketOf, ticketRef } from "./tickets.mjs";
+import { branchFor, envForSlot, nameVars, nextFreeSlot, portOf, slotVars, slugify, upsertEnvText } from "./worktree.mjs";
 
 const config = mergeConfig({
   services: [
@@ -62,8 +63,52 @@ describe("slots", () => {
     expect(slugify("The end", 3)).toBe("end");
     expect(slugify("To be or not")).toBe("not");
     expect(slugify("of the")).toBe("of-the");
-    expect(ticketOf(config, "feat/712-site-offline")).toBe(712);
+    expect(ticketOf(config, "feat/712-site-offline")).toBe("712");
     expect(ticketOf(config, "main", "repo-ads")).toBe(null);
+  });
+});
+
+describe("tickets outside GitHub", () => {
+  const jira = mergeConfig({
+    ticket: { github: false, keyPattern: "ED-\\d+", urlTemplate: "https://acme.atlassian.net/browse/{ticket}", types: ["feat", "fix", "chore"] },
+    worktree: { branch: "{type}/{feature}" },
+    github: { board: { owner: "acme", number: 3 } },
+  });
+  const repo = { mainRoot: "/dev/first-react", config: jira } as unknown as RepoContext;
+
+  test("keys from branches and from people", () => {
+    expect(jira.ticket.branchPattern).toBe("(?:^|/)(ED-\\d+)-");
+    expect(ticketOf(jira, "fix/ED-15914-system-check")).toBe("ED-15914");
+    expect(ticketOf(jira, "feat/712-x")).toBe(null);
+    expect(parseTicketKey(jira, "ed-15914")).toBe("ED-15914");
+    expect(() => parseTicketKey(jira, "15914")).toThrow(/not a ticket key/);
+    expect(parseTicketKey(config, "#12")).toBe("12");
+    expect(ticketRef(jira, "ED-15914")).toBe("ED-15914");
+    expect(ticketRef(config, "12")).toBe("#12");
+    expect(ticketNumber("ED-15914")).toBe(15914);
+  });
+
+  test("no board without GitHub issues", () => {
+    expect(jira.github.board).toBe(null);
+  });
+
+  test("{type} in the branch, the key split off the feature", () => {
+    expect(nameVars(repo, "ED-15914-system-check", "fix")).toMatchObject({ ticket: "ED-15914", slug: "system-check", type: "fix" });
+    expect(branchFor(repo, "ED-15914-system-check", "fix")).toBe("fix/ED-15914-system-check");
+    expect(branchFor(repo, "ED-15914-system-check")).toBe("feat/ED-15914-system-check");
+  });
+
+  test("PR title and body name the key", () => {
+    expect(withTicketRef("fix: poll the system check", "ED-15914", "scope")).toBe("fix(ED-15914): poll the system check");
+    expect(withTicketRef("fix(gis): poll it", "ED-15914", "scope")).toBe("fix(gis): poll it (ED-15914)");
+    expect(withTicketRef("feat!: drop it", "ED-1", "scope")).toBe("feat(ED-1)!: drop it");
+    expect(withTicketRef("fix: [ED-15914] poll it", "ED-15914", "scope")).toBe("fix: [ED-15914] poll it");
+    expect(withTicketRef("fix: poll it", "ED-15914", "suffix")).toBe("fix: poll it (ED-15914)");
+    expect(withTicketRef("fix: poll it", "ED-15914", "none")).toBe("fix: poll it");
+    expect(withTicketRef("fix: see ED-159140", "ED-15914", "suffix")).toBe("fix: see ED-159140 (ED-15914)");
+    expect(bodyNamesTicket("Fixes [ED-15914](u)", "ED-15914")).toBe(true);
+    expect(bodyNamesTicket("Closes #12", "ED-15914")).toBe(false);
+    expect(prTitleProblems("fix(ED-15914): poll the system check")).toEqual([]);
   });
 });
 
@@ -72,7 +117,8 @@ describe("PR titles", () => {
     expect(prTitleProblems("feat(web): add csv export (#12)")).toEqual([]);
     expect(prTitleProblems("Add csv export").length).toBe(1);
     expect(prTitleProblems("feat: Add csv export.").length).toBe(1);
-    expect(withTicketRef("fix: x", 12)).toBe("fix: x (#12)");
+    expect(withTicketRef("fix: x", "#12")).toBe("fix: x (#12)");
+    expect(withTicketRef("fix: x (#9)", "#12")).toBe("fix: x (#9)");
     expect(titleFromCommits(["chore: a", "feat(web): b", "fix: c"])).toBe("feat(web): b");
     expect(bodyLinksTicket("…\nCloses #12")).toBe(true);
   });

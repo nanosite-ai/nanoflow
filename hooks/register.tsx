@@ -4,12 +4,12 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 import type { NfActivity, NfCheck, NfService, NfSnapshot, NfSource, NfTab, NfTicket, NfWorktree } from '../types'
 import { ACTION, DEFAULT_CONFIG, fillTemplate, mergeConfig, starterConfig, type NfActionKey, type NfConfig } from './config'
-import { diffSnapshots, mergeLocal, type NfEvent } from './diff'
+import { diffSnapshots, mergeLocal, ticketLabel, type NfEvent } from './diff'
 import { statusLine } from './progress'
 import { browserEventOf, causeOf, CHECK_KINDS, matchRule, outputDetail, shortCommand, toastFor } from './rules'
 import {
   applyFlowResult, baseName, buildFlowQuery, isInside, isSnapshot, normalizePath, parseJson, parseWorktreeList, quoteForCmd, samePath, serviceUrl,
-  featureOf, slugFromRemote, ticketNumberOf, ticketUrl, type GitWorktree, type GqlRepo,
+  featureOf, slugFromRemote, ticketKeyOf, ticketNumber, ticketUrl, type GitWorktree, type GqlRepo,
 } from './scan'
 import { PaneView, type PaneHandlers } from './view'
 
@@ -124,7 +124,7 @@ const localWorktree = async ($: $, wt: GitWorktree, mainRoot: string, win: boole
     runText($, ['git', 'status', '--porcelain', '--ignore-submodules=dirty'], wt.path),
     isMain || !wt.branch ? Promise.resolve('0') : runText($, ['git', 'rev-list', '--count', `${S.config.mainBranch}..${wt.branch}`], wt.path),
   ])
-  const n = ticketNumberOf(S.config.ticket.branchPattern, wt.branch, name)
+  const key = ticketKeyOf(S.config, wt.branch, name)
   return {
     name,
     path: wt.path,
@@ -135,7 +135,7 @@ const localWorktree = async ($: $, wt: GitWorktree, mainRoot: string, win: boole
     dirty: status ? status.split(/\r?\n/).filter(Boolean).length : 0,
     ahead: Number(ahead ?? 0) || 0,
     services: await servicesFor($, slot),
-    ticket: n === null ? null : { number: n, title: null, url: ticketUrl(S.config, n, null), state: null, status: null, worktree: name },
+    ticket: key === null ? null : { number: ticketNumber(key), key, title: null, url: ticketUrl(S.config, key, null), state: null, status: null, worktree: name },
     pr: null,
   }
 }
@@ -145,9 +145,12 @@ const githubFill = async ($: $, mainRoot: string, trees: NfWorktree[]): Promise<
   const slug = S.config.github.repo ?? slugFromRemote((await runText($, ['git', 'remote', 'get-url', 'origin'], mainRoot)) ?? '')
   if (!slug) return null
   const [owner, name] = slug.split('/')
-  const out = await runText($, ['gh', 'api', 'graphql', '-f', `query=${buildFlowQuery(trees)}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '--jq', '.data.repository'], mainRoot)
+  const issues = S.config.ticket.github
+  const out = await runText($, ['gh', 'api', 'graphql', '-f', `query=${buildFlowQuery(trees, issues)}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '--jq', '.data.repository'], mainRoot)
   const data = parseJson<GqlRepo>(out)
-  return data ? applyFlowResult(S.config, trees, data) : null
+  const board = data ? applyFlowResult(S.config, trees, data) : null
+  // The tickets list is GitHub's open issues: none to show when tickets live elsewhere.
+  return issues ? board : null
 }
 
 /** The built-in scanner (any git repo): worktrees + slot ports + liveness; with `full`, also gh. */
@@ -160,7 +163,8 @@ const builtinSnapshot = async ($: $, full: boolean): Promise<NfSnapshot> => {
   const trees = await Promise.all(git.map(wt => localWorktree($, wt, mainRoot, win)))
   const containing = trees.filter(t => isInside(S.cwd, t.path, win)).sort((a, b) => b.path.length - a.path.length)[0]
   for (const t of trees) t.isCurrent = t === containing
-  const board = full && S.config.ticket.github ? await githubFill($, mainRoot, trees) : null
+  // PRs and CI come from GitHub whatever the tracker; githubFill skips the issues when tickets live elsewhere.
+  const board = full ? await githubFill($, mainRoot, trees) : null
   return {
     version: 1,
     generatedAt: new Date(await $.clock.now()).toISOString(),
@@ -290,8 +294,10 @@ const runAction = async ($: $, key: NfActionKey, ctx: { wt?: NfWorktree; ticket?
   if (!action) return
   const snapshot = await read($, snapshotAtom)
   const wt = ctx.wt
+  const ticket = ctx.ticket ?? wt?.ticket ?? undefined
   const vars = {
-    ticket: ctx.ticket?.number ?? wt?.ticket?.number,
+    ticket: ticket ? (ticket.key ?? ticket.number) : undefined,
+    ref: ticket ? ticketLabel(ticket) : undefined,
     title: ctx.title ?? ctx.ticket?.title ?? wt?.ticket?.title,
     name: wt?.name,
     feature: wt && snapshot ? featureOf(wt.name, snapshot.mainRoot) : wt?.name,
@@ -301,7 +307,7 @@ const runAction = async ($: $, key: NfActionKey, ctx: { wt?: NfWorktree; ticket?
     mainRoot: snapshot?.mainRoot,
   }
   const label = action.label ?? key
-  const subject = wt?.name ?? (vars.ticket !== undefined ? `#${vars.ticket}` : '')
+  const subject = wt?.name ?? vars.ref ?? ''
   if (action.confirm) {
     const answer = await $.ui.ask(`${label} ${subject}?`, ['Yes', 'No']).catch(() => 'No')
     if (answer !== 'Yes') return

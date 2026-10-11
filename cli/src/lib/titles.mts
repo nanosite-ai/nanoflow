@@ -1,4 +1,4 @@
-// Session + terminal title that follows the task: `#<ticket> · <branch> · <short> [· PR #<n>] [✓]`.
+// Session + terminal title that follows the task: `<#712 | ED-712> · <branch> · <short> [· PR #<n>] [✓]`.
 // The Claude Code session is renamed the way `/rename` does it: a custom-title record appended to the
 // session's transcript. The terminal tab is set with an escape sequence, or on Windows by attaching to the
 // console of the Claude process.
@@ -9,11 +9,13 @@ import { fillTemplate, type FlowConfig } from "./config.mjs";
 import { tempFile } from "./globals.mjs";
 import { c, info, step } from "./output.mjs";
 import { IS_WIN, tryRun } from "./proc.mjs";
+import { ticketRef } from "./tickets.mjs";
 
 export const SEP = " · ";
 
-export const baseTitle = (config: FlowConfig, ticket: number | string, branch: string, short: string): string =>
-  fillTemplate(config.title.format, { ticket, branch, short });
+/** title.format filled: {ticket} is the key, {ref} how it's written (`#712`, `ED-712`). */
+export const baseTitle = (config: FlowConfig, ticket: string, branch: string, short: string): string =>
+  fillTemplate(config.title.format, { ticket, ref: ticketRef(config, ticket), branch, short });
 
 export const withPr = (base: string, pr: number | string, merged = false): string => `${base}${SEP}PR #${pr}${merged ? " ✓" : ""}`;
 

@@ -1,6 +1,7 @@
 // The pane's shared building blocks: colors and the small pieces every tab repeats. Reach for these
 // before writing a Box/Text/Link by hand, and add a variant here rather than a one-off in a tab.
 import type { Elements } from 'claude-code'
+import { ticketLabel } from './diff'
 
 export type PaneElements = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button' | 'Link'> & { Input?: Elements['terminal']['Input'] }
 
@@ -59,10 +60,11 @@ export const Mark = (el: PaneElements, key: string, look: Look, text = '') => {
 /** A board column as a badge in its color. */
 export const StatusBadge = (el: PaneElements, key: string, status: string) => Badge(el, key, status, statusColor(status))
 
-/** `🎫 #712`, linked to the ticket. */
-export const TicketLink = (el: PaneElements, key: string, ticket: { number: number; url: string }) => {
-  const { Link } = el
-  return <Link key={key} href={ticket.url} label={`🎫 #${ticket.number}`} />
+/** `🎫 #712` (or `🎫 ED-712`), linked to the ticket. */
+export const TicketLink = (el: PaneElements, key: string, ticket: { number: number; key?: string; url: string }) => {
+  const { Link, Text } = el
+  const label = `🎫 ${ticketLabel(ticket)}`
+  return ticket.url ? <Link key={key} href={ticket.url} label={label} /> : <Text key={key}>{label}</Text>
 }
 
 /** A link when there is somewhere to go, the same label as colored text otherwise. */

@@ -1,10 +1,13 @@
 // Snapshot → snapshot: what changed that the person should hear about. Pure.
-import type { NfSnapshot, NfTone, NfWorktree } from '../types'
+import type { NfSnapshot, NfTicket, NfTone, NfWorktree } from '../types'
 
 export type NfEvent = { icon: string; text: string; tone: NfTone; important: boolean; href?: string; detail?: string }
 
+/** `#712` for a GitHub issue, else the key (`ED-712`). */
+export const ticketLabel = (t: Pick<NfTicket, 'number' | 'key'>): string => (t.key && !/^\d+$/.test(t.key) ? t.key : `#${t.number}`)
+
 const label = (wt: NfWorktree): string =>
-  wt.ticket ? `#${wt.ticket.number}${wt.ticket.title ? ` ${truncate(wt.ticket.title, 40)}` : ''}` : wt.name
+  wt.ticket ? `${ticketLabel(wt.ticket)}${wt.ticket.title ? ` ${truncate(wt.ticket.title, 40)}` : ''}` : wt.name
 
 export const truncate = (text: string, max: number): string => (text.length > max ? `${text.slice(0, max - 1)}…` : text)
 
@@ -21,7 +24,7 @@ export const mergeLocal = (prev: NfSnapshot | null, local: NfSnapshot): NfSnapsh
     worktrees: local.worktrees.map(wt => {
       const old = byPath.get(wt.path)
       if (!old) return wt
-      const ticket = wt.ticket && old.ticket && old.ticket.number === wt.ticket.number
+      const ticket = wt.ticket && old.ticket && ticketLabel(old.ticket) === ticketLabel(wt.ticket)
         ? { ...wt.ticket, title: wt.ticket.title ?? old.ticket.title, state: wt.ticket.state ?? old.ticket.state, status: wt.ticket.status ?? old.ticket.status, url: old.ticket.url || wt.ticket.url }
         : wt.ticket
       return { ...wt, ticket, pr: wt.pr ?? (old.branch === wt.branch ? old.pr : null) }
@@ -70,7 +73,7 @@ export const diffSnapshots = (prev: NfSnapshot | null, next: NfSnapshot, browser
       }
     }
     if (wt.ticket?.state === 'CLOSED' && old.ticket?.state === 'OPEN') {
-      events.push({ icon: '🏁', text: `Ticket #${wt.ticket.number} closed`, tone: 'success', important: false, href: wt.ticket.url })
+      events.push({ icon: '🏁', text: `Ticket ${ticketLabel(wt.ticket)} closed`, tone: 'success', important: false, href: wt.ticket.url })
     }
   }
   for (const old of prev.worktrees) {
