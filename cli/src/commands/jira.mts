@@ -6,6 +6,10 @@ import { runInherit } from "../lib/proc.mjs";
 import { ask, secret } from "../lib/prompt.mjs";
 import { requireRepo } from "../lib/repo.mjs";
 
+/** acli asks which site in the terminal: an agent's shell (or CI) can't answer that. */
+const LOGIN_NEEDS_TTY =
+  "acli login did not complete. It asks you to pick the site in the terminal, which an agent's shell or CI can't answer: run `nf jira login` (or `acli jira auth login --web`) in your own terminal, or use `nf jira login --token --email <you> --token-stdin < token.txt`.";
+
 /** The repo's Jira site, or --site. */
 const siteOf = (opt: string | undefined): string => {
   if (opt) return siteKey(opt);
@@ -59,7 +63,7 @@ export const registerJira = (program: Command): void => {
       // acli's own browser login, in this terminal: it asks which site, and keeps the login itself.
       info(`acli jira auth login --web  (pick ${new URL(site).host} in the browser and here)`);
       // Its output goes to stderr, so stdout stays nanoflow's own (--json).
-      if (runInherit("acli", ["jira", "auth", "login", "--web"], { stdio: ["inherit", 2, "inherit"] }) !== 0) throw new Error("acli login did not complete.");
+      if (runInherit("acli", ["jira", "auth", "login", "--web"], { stdio: ["inherit", 2, "inherit"] }) !== 0) throw new Error(LOGIN_NEEDS_TTY);
       resetAcliStatus();
       const { client, reason } = await jiraClient(requireRepo().config);
       if (!client || client.via !== "acli") throw new Error(`acli logged in, but nanoflow can't use it for ${site}: ${reason ?? "a JIRA_EMAIL/JIRA_API_TOKEN in the environment wins"}.`);

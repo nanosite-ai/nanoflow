@@ -116,7 +116,8 @@ on and creates them in Jira the way it does GitHub issues. PRs and CI still come
 
 **Log in once per machine.** nanoflow reaches Jira the way it reaches GitHub through `gh`: through
 [acli](https://developer.atlassian.com/cloud/acli/guides/install-acli/), Atlassian's CLI, which keeps the login
-itself. Install it, then `nf jira login` (it runs `acli jira auth login --web`: pick your site in the browser).
+itself. Install it, then run `nf jira login` **in your own terminal** (it runs `acli jira auth login --web`: sign
+in in the browser, then pick your site in the terminal; an agent's shell can't answer that prompt).
 
 Without acli, or in CI, use an [API token](https://id.atlassian.com/manage-profile/security/api-tokens) over the
 REST API instead: `nf jira login --token` checks it and saves it in `~/.claude/nanoflow/credentials.json`,
