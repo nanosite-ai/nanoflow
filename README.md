@@ -186,7 +186,7 @@ Full reference: [docs/cli.md](docs/cli.md).
 |---|---|
 | **Languages / frameworks** | Any. Services are just a port + a start command. |
 | **Package managers** | npm, pnpm, yarn, bun (detected by `nf init`). |
-| **Tickets** | GitHub Issues + GitHub Projects (v2) boards, or Jira (`ticket.tracker: "jira"`, `nf jira login`): titles, statuses, moves, comments, new tickets. PRs and CI from GitHub ([config](docs/config.md#tickets-in-jira)). |
+| **Tickets** | GitHub Issues + GitHub Projects (v2) boards, or Jira through Atlassian's `acli`, like `gh` (`ticket.tracker: "jira"`, `nf jira login`): titles, statuses, moves, comments, new tickets. PRs and CI from GitHub ([config](docs/config.md#tickets-in-jira)). |
 | **OS** | Windows, macOS, Linux. |
 | **Your own CLI** | Already have a dev CLI? Make it print the [provider contract](docs/provider-contract.md) and the dashboard uses it instead. |
 

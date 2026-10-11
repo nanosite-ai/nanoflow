@@ -255,7 +255,7 @@ const withGithub = async (repo: RepoContext, trees: FlowWorktree[]): Promise<Flo
 
 /** Jira tickets: their titles and workflow status, in one search. Not logged in (or offline): keys and links only. */
 const withJira = async (repo: RepoContext, trees: FlowWorktree[]): Promise<void> => {
-  const { client } = jiraClient(repo.config);
+  const { client } = await jiraClient(repo.config);
   const keys = trees.flatMap((t) => (t.ticket ? [t.ticket.key] : []));
   if (!client || !keys.length) return;
   try {

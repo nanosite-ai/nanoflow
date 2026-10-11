@@ -165,7 +165,7 @@ export const registerSetup = (program: Command): void => {
           add("board", Boolean(id), id ? `${b.owner}/${b.number}` : `cannot read project ${b.owner}/${b.number} (gh auth refresh -s project)`);
         } else add("board", true, "none configured (optional)");
         if (repo.config.ticket.tracker === "jira") {
-          const { client, reason } = jiraClient(repo.config);
+          const { client, reason } = await jiraClient(repo.config);
           const who = client ? await client.myself().catch((err: Error) => err) : null;
           add("Jira", typeof who === "string", typeof who === "string" ? `${client?.site} as ${who}` : who ? who.message : (reason ?? ""));
         }

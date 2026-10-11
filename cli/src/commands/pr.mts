@@ -110,8 +110,8 @@ export const registerPr = (program: Command): void => {
         success(`${uploaded.length} screenshot(s) attached`);
       }
       // GitHub links the PR to its issue through `Closes #N`; a Jira ticket gets a comment with the link.
-      const jira = repo.config.ticket.tracker === "jira" ? jiraClient(repo.config).client : null;
-      if (jira) await jira.comment(t.ticket, `Pull request: [${title}|${url}]`).catch((err: Error) => warn(`${t.ticket}: no comment (${err.message})`));
+      const jira = repo.config.ticket.tracker === "jira" ? (await jiraClient(repo.config)).client : null;
+      if (jira) await jira.comment(t.ticket, `Pull request: ${title}\n${url}`).catch((err: Error) => warn(`${t.ticket}: no comment (${err.message})`));
       const { note } = await advanceTask(t, number, STATUS.inReview);
       result({ pr: number, url, title, issue: ticketJson(repo.config, t.ticket), ticketNote: note }, () => success(note));
     });

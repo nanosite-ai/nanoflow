@@ -27,7 +27,7 @@ const shortTitleOf = (title: string): string => slugify(title, 3).replace(/-/g, 
  * title comes from --title / --slug and the move is left to the person.
  */
 const claimJiraTicket = async (repo: RepoContext, ticketArg: string | undefined, opts: StartOpts, type: string): Promise<{ key: string; title: string }> => {
-  const { client, reason } = jiraClient(repo.config);
+  const { client, reason } = await jiraClient(repo.config);
   if (!client) {
     if (opts.new) throw new Error(`Creating a Jira ticket needs Jira access: ${reason}.`);
     const key = parseTicketKey(repo.config, ticketArg as string);
@@ -84,7 +84,7 @@ export const registerTask = (program: Command): void => {
       if (dryRun(cmd, `would ${opts.new ? `create "${opts.new}"` : `claim ${issueArg}`}, set In progress, create the worktree, set titles, comment`)) return;
 
       const ticket = await claimTicket(repo, issueArg, opts, type);
-      const jira = config.ticket.tracker === "jira" ? jiraClient(config).client : null;
+      const jira = config.ticket.tracker === "jira" ? (await jiraClient(config)).client : null;
       const moved = jira ? await moveTicket(repo, ticket.key, STATUS.inProgress) : config.github.board ? boardNote(repo, ticket.key, STATUS.inProgress) : null;
       if (moved) success(moved);
 
@@ -97,8 +97,7 @@ export const registerTask = (program: Command): void => {
       applyTitles(config, base);
 
       if (config.ticket.tracker === "github") commentIssue(repo, Number(ticket.key), opts.comment ?? `Starting work on \`${branch}\`.`);
-      // Jira comments are wiki markup: {{…}} is monospace.
-      else if (jira) await jira.comment(ticket.key, opts.comment ?? `Starting work on {{${branch}}}.`).catch((err: Error) => warn(`${ticket.key}: no comment (${err.message})`));
+      else if (jira) await jira.comment(ticket.key, opts.comment ?? `Starting work on branch ${branch}.`).catch((err: Error) => warn(`${ticket.key}: no comment (${err.message})`));
       result({ issue: ticketJson(config, ticket.key), branch, worktree, title: base, ticketNote: moved }, () => success(`ready: cd "${worktree}"`));
     });
 

@@ -3,7 +3,7 @@ import type { Command } from "commander";
 import { fillTemplate, STATUS, STATUSES, type Status } from "../lib/config.mjs";
 import { createIssue, linkSubIssue, setBoardStatus, boardItems } from "../lib/gh.mjs";
 import { dryRun, parseIssueNumber } from "../lib/globals.mjs";
-import { jiraClient, type Jira, type JiraIssue } from "../lib/jira.mjs";
+import { jiraClient, type JiraBackend, type JiraIssue } from "../lib/jira.mjs";
 import { c, info, result, success, warn } from "../lib/output.mjs";
 import { requireRepo, type RepoContext } from "../lib/repo.mjs";
 import { requireGithubTickets, ticketUrl } from "../lib/tickets.mjs";
@@ -70,14 +70,13 @@ export const createTicket = (repo: RepoContext, title: string, opts: NewTicketOp
   return { number, url: ticketUrl(repo, String(number)), title, status };
 };
 
-/** The same body for Jira, whose descriptions are wiki markup: `h3.` headings. */
-const jiraBodyFrom = (repo: RepoContext, type: string, opts: NewTicketOpts): string =>
-  opts.body || opts.bodyFile ? bodyFrom(repo, type, opts) : bodyFrom(repo, type, { ...opts, parent: undefined }).replace(/^### /gm, "h3. ");
-
-/** Create a Jira ticket from the same flags (no labels, no --parent: Jira has its own fields for those). */
-export const createJiraTicket = async (client: Jira, repo: RepoContext, title: string, opts: NewTicketOpts, type: string): Promise<JiraIssue> => {
+/**
+ * Create a Jira ticket from the same flags and sections (each backend turns the `###` headings into Jira's
+ * own). No labels, no --parent: Jira has its own fields for those.
+ */
+export const createJiraTicket = async (client: JiraBackend, repo: RepoContext, title: string, opts: NewTicketOpts, type: string): Promise<JiraIssue> => {
   if (opts.parent || opts.area) warn("--parent and --area are GitHub-only: set them in Jira");
-  return client.create({ title, type, body: jiraBodyFrom(repo, type, opts) });
+  return client.create({ title, type, body: bodyFrom(repo, type, { ...opts, parent: undefined }) });
 };
 
 export const addTicketOptions = (cmd: Command): Command =>
@@ -101,7 +100,7 @@ export const registerTicket = (program: Command): void => {
       const repo = requireRepo();
       if (dryRun(cmd, `would create "${title}" → ${opts.status}`)) return;
       if (repo.config.ticket.tracker === "jira") {
-        const { client, reason } = jiraClient(repo.config);
+        const { client, reason } = await jiraClient(repo.config);
         if (!client) throw new Error(`Creating a Jira ticket needs Jira access: ${reason}.`);
         const type = opts.type ?? repo.config.ticket.types[0];
         if (!repo.config.ticket.types.includes(type)) throw new Error(`Unknown type "${type}". Use one of: ${repo.config.ticket.types.join(", ")}.`);

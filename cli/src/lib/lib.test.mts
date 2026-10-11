@@ -5,6 +5,7 @@ import { applyFlowResult, buildFlowQuery, ciRollup, type FlowWorktree } from "./
 import { slugFromRemote } from "./gh.mjs";
 import type { RepoContext } from "./repo.mjs";
 import { attachShotsToBody, shotRawUrl, shotsFolder } from "./shots.mjs";
+import { issueFromAcli } from "./jira.mjs";
 import { parseTicketKey, ticketNumber, ticketOf, ticketRef } from "./tickets.mjs";
 import { branchFor, envForSlot, nameVars, nextFreeSlot, portOf, slotVars, slugify, upsertEnvText } from "./worktree.mjs";
 
@@ -99,6 +100,21 @@ describe("tickets outside GitHub", () => {
     expect(nameVars(repo, "ED-15914-system-check", "fix")).toMatchObject({ ticket: "ED-15914", slug: "system-check", type: "fix" });
     expect(branchFor(repo, "ED-15914-system-check", "fix")).toBe("fix/ED-15914-system-check");
     expect(branchFor(repo, "ED-15914-system-check")).toBe("feat/ED-15914-system-check");
+  });
+
+  test("acli's work items: Jira's issue JSON or a flattened row", () => {
+    const site = "https://acme.atlassian.net";
+    const full = { key: "ED-1", fields: { summary: "A", status: { name: "Done", statusCategory: { key: "done" } } } };
+    expect(issueFromAcli(jira, site, full)).toEqual({ key: "ED-1", title: "A", status: "Done", state: "CLOSED", url: `${site}/browse/ED-1` });
+    expect(issueFromAcli(jira, site, { key: "ED-2", summary: "B", status: "In Progress" })).toMatchObject({ title: "B", status: "In Progress", state: "OPEN" });
+    // No category: closed when it is the repo's "done" status.
+    expect(issueFromAcli(jira, site, { key: "ED-3", fields: { summary: "C", status: { name: "done" } } })?.state).toBe("CLOSED");
+    expect(issueFromAcli(jira, site, { summary: "no key" })).toBe(null);
+    expect(jira.jira).toMatchObject({ site: null, project: null });
+    expect(mergeConfig({ ticket: { tracker: "jira", keyPattern: "ED-\\d+" }, jira: { site: "https://acme.atlassian.net/" } })).toMatchObject({
+      ticket: { urlTemplate: "https://acme.atlassian.net/browse/{ticket}" },
+      jira: { site: "https://acme.atlassian.net", project: "ED", statuses: { "in-progress": "In Progress", done: "Done" } },
+    });
   });
 
   test("PR title and body name the key", () => {

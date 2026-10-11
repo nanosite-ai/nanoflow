@@ -54,7 +54,7 @@ export const moveTicket = async (repo: RepoContext, ticket: string, status: Stat
     setBoardStatus(repo, Number(ticket), status);
     return boardNote(repo, ticket, status);
   }
-  const { client, reason } = jiraClient(repo.config);
+  const { client, reason } = await jiraClient(repo.config);
   if (!client) return `${ticket}: not moved in Jira (${reason})`;
   try {
     return (await client.moveTo(ticket, status)).note;
