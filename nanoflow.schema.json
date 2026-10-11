@@ -48,7 +48,7 @@
     },
     "jira": {
       "type": "object",
-      "description": "With ticket.tracker jira: where nanoflow reads, moves, comments on and creates tickets. Log in with nf jira login (through acli), or nf jira login --token / JIRA_EMAIL + JIRA_API_TOKEN",
+      "description": "With ticket.tracker jira: where nanoflow reads, moves, comments on and creates tickets. Log in with nf jira login (through acli, Atlassian's CLI)",
       "properties": {
         "site": { "type": "string", "description": "e.g. https://acme.atlassian.net; ticket links default to <site>/browse/<key>" },
         "project": { "type": "string", "description": "Project key new tickets go to. Default: the prefix of ticket.keyPattern (ED for ED-\\d+)" },

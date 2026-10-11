@@ -64,10 +64,10 @@ const FIXTURE_LIST: Fixture[] = [
 /** Never let a test rename the Claude Code session or terminal it runs under. */
 const cleanEnv = (): NodeJS.ProcessEnv => {
   const env = { ...process.env };
-  for (const k of ["CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "CLAUDECODE", "NANOFLOW_GH", "NANOFLOW_ACLI", "JIRA_EMAIL", "JIRA_API_TOKEN"]) delete env[k];
+  for (const k of ["CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "CLAUDECODE", "NANOFLOW_GH", "NANOFLOW_ACLI"]) delete env[k];
   return {
     ...env,
-    // Saved logins (nf jira login) go here, never to the real ~/.claude.
+    // Session titles and anything else nanoflow keeps per user go here, never to the real ~/.claude.
     CLAUDE_CONFIG_DIR: path.join(ROOT, "claude-config"),
     NANOFLOW_GH: FAKE_GH,
     // acli is "installed" but logged out unless a test logs it in (never the real one on this machine).
@@ -312,7 +312,7 @@ describe("the task lifecycle", { timeout: 120_000 }, () => {
   });
 });
 
-describe("tickets in Jira (ticket.tracker: jira)", { timeout: 120_000 }, () => {
+describe("tickets in Jira, acli logged out (ticket.tracker: jira)", { timeout: 120_000 }, () => {
   const repo = path.join(ROOT, "web");
   const wt = path.join(ROOT, "web-ED-15914-system-check");
   const wt2 = path.join(ROOT, "web-ED-15915-stale-license-warning-reactivation");
@@ -328,7 +328,6 @@ describe("tickets in Jira (ticket.tracker: jira)", { timeout: 120_000 }, () => {
     jiraSeen = all.length;
     return fresh.map((c) => ({ line: `${c.method} ${c.path}`, body: c.body }));
   };
-  const login = { JIRA_EMAIL: "e2e@nanoflow.invalid", JIRA_API_TOKEN: "jira-token" };
 
   beforeAll(async () => {
     jiraServer = spawn(process.execPath, [FAKE_JIRA, JIRA_LOG], { stdio: ["ignore", "pipe", "inherit"] });
@@ -395,79 +394,6 @@ describe("tickets in Jira (ticket.tracker: jira)", { timeout: 120_000 }, () => {
     expect(summary.json().text).toContain(`[ticket: [ED-15914](${JIRA}/browse/ED-15914)]`);
   });
 
-  test("jira login: checks the token, saves it outside the repo; whoami and doctor see it", () => {
-    const bad = nfWith({ input: "wrong-token\n" }, repo, "jira", "login", "--email", "e2e@nanoflow.invalid", "--token-stdin");
-    expect(bad.code).toBe(1);
-    expect(bad.stderr).toContain("401");
-
-    const res = nfWith({ input: "jira-token\n" }, repo, "jira", "login", "--email", "e2e@nanoflow.invalid", "--token-stdin", "--json");
-    expect(res.code, res.stderr).toBe(0);
-    expect(res.json()).toMatchObject({ site: JIRA, user: "E2E User" });
-    expect(res.json().file).toBe(path.join(ROOT, "claude-config", "nanoflow", "credentials.json"));
-    expect(git(repo, "status", "--porcelain")).toBe("");
-
-    expect(nf(repo, "jira", "whoami", "--json").json()).toMatchObject({ user: "E2E User", via: "token" });
-    const doctor = nf(repo, "doctor", "--json").json();
-    expect(doctor.checks.find((c: { name: string }) => c.name === "Jira")).toMatchObject({ ok: true, detail: `${JIRA} as E2E User` });
-    jiraCalls();
-  });
-
-  test("task start <key>: reads the title from Jira, moves it to In Progress, comments the branch", () => {
-    expect(nf(repo, "task", "start", "ED-15916").stderr).toContain("ED-15916 is Done");
-    expect(nf(repo, "task", "start", "ED-99999").stderr).toContain("404");
-    jiraCalls();
-
-    const res = nf(repo, "task", "start", "ED-15915", "--type", "fix", "--json");
-    expect(res.code, res.stderr).toBe(0);
-    expect(res.json()).toMatchObject({ issue: "ED-15915", branch: "fix/ED-15915-stale-license-warning-reactivation" });
-    expect(existsSync(wt2)).toBe(true);
-    const calls = jiraCalls();
-    expect(calls.map((c) => c.line)).toContain("POST /rest/api/2/issue/ED-15915/transitions");
-    expect(calls.find((c) => c.line.endsWith("/transitions") && c.line.startsWith("POST"))?.body).toEqual({ transition: { id: "11" } });
-    expect(calls.find((c) => c.line.endsWith("/comment"))?.body).toEqual({ body: "Starting work on branch fix/ED-15915-stale-license-warning-reactivation." });
-  });
-
-  test("flow: Jira titles and statuses on the worktrees", () => {
-    const flow = nf(repo, "flow", "--json");
-    expect(flow.code, flow.stderr).toBe(0);
-    const tree = flow.json().worktrees.find((w: { branch: string }) => w.branch === "fix/ED-15915-stale-license-warning-reactivation");
-    expect(tree.ticket).toMatchObject({ key: "ED-15915", title: "Stale license warning after reactivation", status: "In Progress", state: "OPEN" });
-    expect(flow.json().board).toBeNull();
-  });
-
-  test("pr create → In Review with the PR linked; task done → Done", () => {
-    writeFileSync(path.join(wt2, "license.mjs"), "export const fresh = true;\n");
-    git(wt2, "add", "-A");
-    git(wt2, "commit", "-q", "-m", "fix: clear the stale license warning");
-    jiraCalls();
-    const pr = nf(wt2, "pr", "create", "--json");
-    expect(pr.code, pr.stderr).toBe(0);
-    expect(pr.json().ticketNote).toBe("ED-15915 → In Review");
-    const calls = jiraCalls();
-    expect(calls.find((c) => c.line.endsWith("/comment"))?.body).toEqual({ body: `Pull request: fix(ED-15915): clear the stale license warning\n${PR_URL}` });
-    expect(calls.find((c) => c.line.startsWith("POST") && c.line.endsWith("/transitions"))?.body).toEqual({ transition: { id: "21" } });
-
-    const done = nf(wt2, "task", "done");
-    expect(done.code, done.stderr).toBe(0);
-    expect(done.stdout).toContain("ED-15915 → Done");
-    expect(nf(wt2, "task", "done").stdout).toContain("ED-15915 is already Done");
-  });
-
-  test("ticket new / task start --new create the ticket in Jira's project", () => {
-    const res = nf(repo, "ticket", "new", "Export the audit log", "--type", "feat", "--definition", "Admins export the log.", "--json");
-    expect(res.code, res.stderr).toBe(0);
-    expect(res.json()).toMatchObject({ key: "ED-16000", url: `${JIRA}/browse/ED-16000` });
-    const create = jiraCalls().find((c) => c.line === "POST /rest/api/2/issue");
-    expect(create?.body.fields).toMatchObject({ project: { key: "ED" }, summary: "Export the audit log", issuetype: { name: "Task" } });
-    expect(create?.body.fields.description).toContain("h3. Definition\nAdmins export the log.");
-
-    const start = nf(repo, "task", "start", "--new", "Crash on empty layer", "--type", "fix", "--no-install", "--json");
-    expect(start.code, start.stderr).toBe(0);
-    expect(start.json()).toMatchObject({ issue: "ED-16001", branch: "fix/ED-16001-crash-empty-layer" });
-    const calls = jiraCalls();
-    expect(calls.find((c) => c.line === "POST /rest/api/2/issue")?.body.fields.issuetype).toEqual({ name: "Bug" });
-    expect(calls.map((c) => c.line)).toContain("POST /rest/api/2/issue/ED-16001/transitions");
-  });
 });
 
 describe("Jira through acli (the way GitHub goes through gh)", { timeout: 120_000 }, () => {
@@ -512,7 +438,6 @@ describe("Jira through acli (the way GitHub goes through gh)", { timeout: 120_00
     git(repo, "commit", "-q", "-m", "chore: initial");
     git(repo, "remote", "add", "origin", origin);
     git(repo, "push", "-q", "-u", "origin", "develop");
-    // The token saved by the tests above must not win: acli comes first.
   });
 
   afterAll(() => {
@@ -522,13 +447,15 @@ describe("Jira through acli (the way GitHub goes through gh)", { timeout: 120_00
   test("jira login runs acli's browser login; whoami and doctor then go through acli", () => {
     const login = run(repo, "jira", "login", "--json");
     expect(login.code, login.stderr).toBe(0);
-    expect(login.json()).toMatchObject({ via: "acli", user: "e2e@nanoflow.invalid" });
+    expect(login.json()).toMatchObject({ user: "e2e@nanoflow.invalid" });
     expect(acliCalls()).toContain("jira auth login --web");
-    expect(run(repo, "jira", "whoami", "--json").json()).toMatchObject({ via: "acli", from: "acli" });
+    expect(run(repo, "jira", "whoami", "--json").json()).toMatchObject({ user: "e2e@nanoflow.invalid" });
     expect(run(repo, "doctor", "--json").json().checks.find((c: { name: string }) => c.name === "Jira").ok).toBe(true);
   });
 
   test("task start <key>: title from acli, → In Progress through acli, branch comment", () => {
+    expect(run(repo, "task", "start", "ED-15916").stderr).toContain("ED-15916 is Done");
+    expect(run(repo, "task", "start", "ED-99999").stderr).toContain("Issue does not exist");
     acliCalls();
     const res = run(repo, "task", "start", "ED-15915", "--type", "fix", "--json");
     expect(res.code, res.stderr).toBe(0);

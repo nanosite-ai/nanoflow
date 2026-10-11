@@ -118,11 +118,8 @@ on and creates them in Jira the way it does GitHub issues. PRs and CI still come
 [acli](https://developer.atlassian.com/cloud/acli/guides/install-acli/), Atlassian's CLI, which keeps the login
 itself. Install it, then run `nf jira login` **in your own terminal** (it runs `acli jira auth login --web`: sign
 in in the browser, then pick your site in the terminal; an agent's shell can't answer that prompt).
-
-Without acli, or in CI, use an [API token](https://id.atlassian.com/manage-profile/security/api-tokens) over the
-REST API instead: `nf jira login --token` checks it and saves it in `~/.claude/nanoflow/credentials.json`,
-outside the repo, or export `JIRA_EMAIL` + `JIRA_API_TOKEN`. Order: those env vars, then acli (when it's logged in
-to `jira.site`), then the saved token. `nf jira whoami` and `nf doctor` show which one is in use.
+nanoflow never holds a Jira secret. `nf jira whoami` and `nf doctor` show the site and account acli uses; acli
+must be logged in to `jira.site` (`acli jira auth switch` when it has several).
 
 | Step | GitHub issues | Jira |
 |---|---|---|

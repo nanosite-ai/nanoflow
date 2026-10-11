@@ -3,7 +3,7 @@ import type { Command } from "commander";
 import { fillTemplate, STATUS, STATUSES, type Status } from "../lib/config.mjs";
 import { createIssue, linkSubIssue, setBoardStatus, boardItems } from "../lib/gh.mjs";
 import { dryRun, parseIssueNumber } from "../lib/globals.mjs";
-import { jiraClient, type JiraBackend, type JiraIssue } from "../lib/jira.mjs";
+import { jiraClient, type Jira, type JiraIssue } from "../lib/jira.mjs";
 import { c, info, result, success, warn } from "../lib/output.mjs";
 import { requireRepo, type RepoContext } from "../lib/repo.mjs";
 import { requireGithubTickets, ticketUrl } from "../lib/tickets.mjs";
@@ -74,7 +74,7 @@ export const createTicket = (repo: RepoContext, title: string, opts: NewTicketOp
  * Create a Jira ticket from the same flags and sections (each backend turns the `###` headings into Jira's
  * own). No labels, no --parent: Jira has its own fields for those.
  */
-export const createJiraTicket = async (client: JiraBackend, repo: RepoContext, title: string, opts: NewTicketOpts, type: string): Promise<JiraIssue> => {
+export const createJiraTicket = async (client: Jira, repo: RepoContext, title: string, opts: NewTicketOpts, type: string): Promise<JiraIssue> => {
   if (opts.parent || opts.area) warn("--parent and --area are GitHub-only: set them in Jira");
   return client.create({ title, type, body: bodyFrom(repo, type, { ...opts, parent: undefined }) });
 };

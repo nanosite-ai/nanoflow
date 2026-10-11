@@ -102,14 +102,14 @@ describe("tickets outside GitHub", () => {
     expect(branchFor(repo, "ED-15914-system-check")).toBe("feat/ED-15914-system-check");
   });
 
-  test("acli's work items: Jira's issue JSON or a flattened row", () => {
+  test("acli's work items (Jira's issue JSON, as acli 1.3.39 prints it)", () => {
     const site = "https://acme.atlassian.net";
-    const full = { key: "ED-1", fields: { summary: "A", status: { name: "Done", statusCategory: { key: "done" } } } };
-    expect(issueFromAcli(jira, site, full)).toEqual({ key: "ED-1", title: "A", status: "Done", state: "CLOSED", url: `${site}/browse/ED-1` });
-    expect(issueFromAcli(jira, site, { key: "ED-2", summary: "B", status: "In Progress" })).toMatchObject({ title: "B", status: "In Progress", state: "OPEN" });
-    // No category: closed when it is the repo's "done" status.
-    expect(issueFromAcli(jira, site, { key: "ED-3", fields: { summary: "C", status: { name: "done" } } })?.state).toBe("CLOSED");
-    expect(issueFromAcli(jira, site, { summary: "no key" })).toBe(null);
+    const item = (key: string, name: string, category: string) => ({
+      expand: "renderedFields", fields: { status: { id: "1", name, statusCategory: { id: 4, key: category, name: "x" } }, summary: "A" }, id: "1", key, transitions: null,
+    });
+    expect(issueFromAcli(site, item("ED-1", "Done", "done"))).toEqual({ key: "ED-1", title: "A", status: "Done", state: "CLOSED", url: `${site}/browse/ED-1` });
+    expect(issueFromAcli(site, item("ED-2", "Ready for Testing", "indeterminate"))).toMatchObject({ status: "Ready for Testing", state: "OPEN" });
+    expect(issueFromAcli(site, { summary: "no key" })).toBe(null);
     expect(jira.jira).toMatchObject({ site: null, project: null });
     expect(mergeConfig({ ticket: { tracker: "jira", keyPattern: "ED-\\d+" }, jira: { site: "https://acme.atlassian.net/" } })).toMatchObject({
       ticket: { urlTemplate: "https://acme.atlassian.net/browse/{ticket}" },

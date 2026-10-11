@@ -13,9 +13,8 @@ Every command takes `--json` (result on stdout, progress on stderr), `--dry` (pr
 | [`nanoflow ticket new`](#nanoflow-ticket-new) | create a ticket (labels + board Status; in Jira, in jira.project) without starting work on it |
 | [`nanoflow board set`](#nanoflow-board-set) | set an issue's Status (adds it to the board if missing) |
 | [`nanoflow board list`](#nanoflow-board-list) | board issues in a column (default: ready, i.e. up for pickup) |
-| [`nanoflow jira login`](#nanoflow-jira-login) | log in to the repo's Jira: acli's browser login (acli keeps it), or --token to save an API token instead |
-| [`nanoflow jira logout`](#nanoflow-jira-logout) | forget the saved API token for the repo's Jira site (acli's own login: acli jira auth logout) |
-| [`nanoflow jira whoami`](#nanoflow-jira-whoami) | check the Jira login: which account, and which way in (acli, or a token and where it comes from) |
+| [`nanoflow jira login`](#nanoflow-jira-login) | log in to the repo's Jira through acli's browser login (acli keeps the login); run it in your own terminal |
+| [`nanoflow jira whoami`](#nanoflow-jira-whoami) | check the Jira login: the site and the account acli is signed in with |
 | [`nanoflow title`](#nanoflow-title) | (re)apply the session + terminal title for the current task branch |
 | [`nanoflow wt create`](#nanoflow-wt-create) | add a worktree + branch for <ticket>-<slug> on the next free port slot; copy and patch shared files; install |
 | [`nanoflow wt list`](#nanoflow-wt-list) | worktrees with their slot, branch and ports |
@@ -175,40 +174,16 @@ Examples:
 ```text
 Usage: nanoflow jira login [options]
 
-log in to the repo's Jira: acli's browser login (acli keeps it), or --token to save an API token
-instead
+log in to the repo's Jira through acli's browser login (acli keeps the login); run it in your own
+terminal
 
 Options:
-  --site <url>     Jira site (default: jira.site in nanoflow.json)
-  --token          use an Atlassian API token instead of acli (CI, or no acli)
-  --email <email>  with --token: your Atlassian account email
-  --token-stdin    with --token: read the token from stdin instead of prompting
-  -h, --help       display help for command
+  -h, --help  display help for command
 
-acli is Atlassian's CLI: https://developer.atlassian.com/cloud/acli/guides/install-acli/
-API tokens: https://id.atlassian.com/manage-profile/security/api-tokens. In CI, export
-JIRA_EMAIL + JIRA_API_TOKEN instead (they win over acli and the saved token).
+Install acli first: https://developer.atlassian.com/cloud/acli/guides/install-acli/
 
 Examples:
   nf jira login
-  nf jira login --token
-  nf jira login --token --email me@acme.com --token-stdin < token.txt
-```
-
-### nanoflow jira logout
-
-```text
-Usage: nanoflow jira logout [options]
-
-forget the saved API token for the repo's Jira site (acli's own login: acli jira auth logout)
-
-Options:
-  --site <url>  Jira site (default: jira.site in nanoflow.json)
-  -h, --help    display help for command
-
-Examples:
-  nf jira logout
-  nf jira logout --site https://acme.atlassian.net
 ```
 
 ### nanoflow jira whoami
@@ -216,7 +191,7 @@ Examples:
 ```text
 Usage: nanoflow jira whoami [options]
 
-check the Jira login: which account, and which way in (acli, or a token and where it comes from)
+check the Jira login: the site and the account acli is signed in with
 
 Options:
   -h, --help  display help for command
