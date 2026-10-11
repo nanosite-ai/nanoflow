@@ -46,6 +46,26 @@
         }
       }
     },
+    "jira": {
+      "type": "object",
+      "description": "With ticket.tracker jira: where nanoflow reads, moves, comments on and creates tickets. Log in with nf jira login (or JIRA_EMAIL + JIRA_API_TOKEN)",
+      "properties": {
+        "site": { "type": "string", "description": "e.g. https://acme.atlassian.net; ticket links default to <site>/browse/<key>" },
+        "project": { "type": "string", "description": "Project key new tickets go to. Default: the prefix of ticket.keyPattern (ED for ED-\\d+)" },
+        "statuses": {
+          "type": "object",
+          "description": "Workflow status per lifecycle step. Default: Backlog, To Do, In Progress, In Review, Done",
+          "properties": {
+            "backlog": { "type": "string" },
+            "ready": { "type": "string" },
+            "in-progress": { "type": "string" },
+            "in-review": { "type": "string" },
+            "done": { "type": "string" }
+          }
+        },
+        "issueTypes": { "$ref": "#/$defs/stringMap", "description": "Jira issue type per --type, e.g. { \"feat\": \"Story\" }. Default: Bug for bug/fix, else Task" }
+      }
+    },
     "slot": {
       "type": "object",
       "properties": { "file": { "type": "string" }, "key": { "type": "string" }, "mainSlot": { "type": "integer" } }

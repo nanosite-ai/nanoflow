@@ -4,6 +4,7 @@
 import path from "node:path";
 import type { FlowConfig, Status } from "./config.mjs";
 import { issueUrl, repoSlug } from "./gh.mjs";
+import { jiraClient } from "./jira.mjs";
 import { warn } from "./output.mjs";
 import { tryRunAsync } from "./proc.mjs";
 import type { RepoContext } from "./repo.mjs";
@@ -252,10 +253,26 @@ const withGithub = async (repo: RepoContext, trees: FlowWorktree[]): Promise<Flo
   }
 };
 
-/** Build the snapshot. `local` skips every GitHub call (fast enough to poll every few seconds). */
+/** Jira tickets: their titles and workflow status, in one search. Not logged in (or offline): keys and links only. */
+const withJira = async (repo: RepoContext, trees: FlowWorktree[]): Promise<void> => {
+  const { client } = jiraClient(repo.config);
+  const keys = trees.flatMap((t) => (t.ticket ? [t.ticket.key] : []));
+  if (!client || !keys.length) return;
+  try {
+    const found = await client.issues(keys);
+    for (const t of trees) {
+      const issue = t.ticket && found.get(t.ticket.key);
+      if (t.ticket && issue) Object.assign(t.ticket, { title: issue.title, status: issue.status, state: issue.state, url: t.ticket.url || issue.url });
+    }
+  } catch (err) {
+    warn(`Jira read failed: ${(err as Error).message}`);
+  }
+};
+
+/** Build the snapshot. `local` skips every GitHub and Jira call (fast enough to poll every few seconds). */
 export const collectFlow = async (repo: RepoContext, args: { cwd: string; local: boolean }): Promise<FlowSnapshot> => {
   const trees = await Promise.all(listWorktrees(repo.config, repo.mainRoot).map((wt) => localWorktree(repo, wt)));
   const current = markCurrent(trees, args.cwd);
-  const board = args.local ? null : await withGithub(repo, trees);
+  const [board] = args.local ? [null] : await Promise.all([withGithub(repo, trees), withJira(repo, trees)]);
   return { version: FLOW_VERSION, generatedAt: new Date().toISOString(), mainRoot: repo.mainRoot.replace(/\\/g, "/"), current, worktrees: trees, board };
 };

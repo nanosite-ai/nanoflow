@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
 import { CONFIG_REL, SCHEMA_URL } from "../lib/config.mjs";
 import { ghAuthOk, repoSlug } from "../lib/gh.mjs";
+import { jiraClient } from "../lib/jira.mjs";
 import { dryRun } from "../lib/globals.mjs";
 import { c, info, result, success } from "../lib/output.mjs";
 import { tryRun } from "../lib/proc.mjs";
@@ -127,9 +128,9 @@ export const registerSetup = (program: Command): void => {
 
   program
     .command("doctor")
-    .description("check what nanoflow relies on: git, gh + auth, the config, the repo slug, the board")
+    .description("check what nanoflow relies on: git, gh + auth, the config, the repo slug, the board, the Jira login")
     .addHelpText("after", "\nExamples:\n  nf doctor\n  nf doctor --json")
-    .action(() => {
+    .action(async () => {
       const checks: { name: string; ok: boolean; detail: string }[] = [];
       const add = (name: string, ok: boolean, detail: string): void => {
         checks.push({ name, ok, detail });
@@ -163,6 +164,11 @@ export const registerSetup = (program: Command): void => {
           const id = tryRun("gh", ["project", "view", String(b.number), "--owner", b.owner, "--format", "json", "--jq", ".id"]);
           add("board", Boolean(id), id ? `${b.owner}/${b.number}` : `cannot read project ${b.owner}/${b.number} (gh auth refresh -s project)`);
         } else add("board", true, "none configured (optional)");
+        if (repo.config.ticket.tracker === "jira") {
+          const { client, reason } = jiraClient(repo.config);
+          const who = client ? await client.myself().catch((err: Error) => err) : null;
+          add("Jira", typeof who === "string", typeof who === "string" ? `${client?.site} as ${who}` : who ? who.message : (reason ?? ""));
+        }
         // Services are optional: a library or CLI repo has nothing to run.
         add("services", true, repo.config.services.map((s) => s.name).join(", ") || "none (optional: add services for per-worktree ports and nf up)");
       }

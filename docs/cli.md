@@ -10,9 +10,12 @@ Every command takes `--json` (result on stdout, progress on stderr), `--dry` (pr
 | [`nanoflow task start`](#nanoflow-task-start) | kick off a task: issue → board In progress → worktree on its own ports → session/terminal title → opening comment |
 | [`nanoflow task pr`](#nanoflow-task-pr) | PR is open: title gets `· PR #n`, board → In review (nanoflow pr create does this for you) |
 | [`nanoflow task done`](#nanoflow-task-done) | PR merged: title gets ✓, board → Done; reminds you to tear the worktree down |
-| [`nanoflow ticket new`](#nanoflow-ticket-new) | create an issue (labels + board Status) without starting work on it |
+| [`nanoflow ticket new`](#nanoflow-ticket-new) | create a ticket (labels + board Status; in Jira, in jira.project) without starting work on it |
 | [`nanoflow board set`](#nanoflow-board-set) | set an issue's Status (adds it to the board if missing) |
 | [`nanoflow board list`](#nanoflow-board-list) | board issues in a column (default: ready, i.e. up for pickup) |
+| [`nanoflow jira login`](#nanoflow-jira-login) | save an Atlassian API token for the repo's Jira site (outside the repo), after checking it works |
+| [`nanoflow jira logout`](#nanoflow-jira-logout) | forget the saved token for the repo's Jira site |
+| [`nanoflow jira whoami`](#nanoflow-jira-whoami) | check the Jira login: which account, and where the token comes from |
 | [`nanoflow title`](#nanoflow-title) | (re)apply the session + terminal title for the current task branch |
 | [`nanoflow wt create`](#nanoflow-wt-create) | add a worktree + branch for <ticket>-<slug> on the next free port slot; copy and patch shared files; install |
 | [`nanoflow wt list`](#nanoflow-wt-list) | worktrees with their slot, branch and ports |
@@ -31,7 +34,7 @@ Every command takes `--json` (result on stdout, progress on stderr), `--dry` (pr
 | [`nanoflow flow`](#nanoflow-flow) | one snapshot of every worktree (slot, services up, ticket, PR, CI) and the open tickets; the nanoflow mod's provider |
 | [`nanoflow summary`](#nanoflow-summary) | the wrap-up footer for the current task, from live state: worktree, branch, PR, ticket, done, local URL |
 | [`nanoflow init`](#nanoflow-init) | write a starter .claude/nanoflow.json from what the repo has (scripts, lockfile, .env files); --team also offers the mod to teammates |
-| [`nanoflow doctor`](#nanoflow-doctor) | check what nanoflow relies on: git, gh + auth, the config, the repo slug, the board |
+| [`nanoflow doctor`](#nanoflow-doctor) | check what nanoflow relies on: git, gh + auth, the config, the repo slug, the board, the Jira login |
 | [`nanoflow docs`](#nanoflow-docs) | print (or --write docs/cli.md) the reference for every command |
 
 ### nanoflow task start
@@ -43,8 +46,8 @@ kick off a task: issue → board In progress → worktree on its own ports → s
 opening comment
 
 Arguments:
-  ticket               existing issue number to claim (or --new); outside GitHub, the ticket key,
-                       e.g. ED-712
+  ticket               existing issue number to claim (or --new); in Jira, the ticket key, e.g.
+                       ED-712
 
 Options:
   --type <type>        issue type (ticket.types in nanoflow.json; default: the first one)
@@ -57,8 +60,8 @@ Options:
   --parent <issue>     link as a sub-issue of this epic
   --new <title>        create the issue first (takes the ticket options)
   --slug <slug>        worktree/branch slug (default: from the issue title)
-  --title <short>      short session title, 2–4 words (default: from the issue title; required
-                       outside GitHub)
+  --title <short>      short session title, 2–4 words (default: from the ticket title; required for
+                       Jira when not logged in)
   --comment <text>     opening comment on the issue (default: names the branch)
   --no-install         skip the worktree's install step
   -h, --help           display help for command
@@ -67,7 +70,7 @@ Examples:
   nanoflow task start 651
   nf task start 651 --slug csv-export --title "csv export"
   nf task start --new "lease expires mid-post" --type bug
-  nf task start ED-712 --title "label overlap" --type fix   (ticket.tracker: "jira")
+  nf task start ED-712 --type fix   (ticket.tracker: "jira")
 ```
 
 ### nanoflow task pr
@@ -106,7 +109,7 @@ Examples:
 ```text
 Usage: nanoflow ticket new [options] <title>
 
-create an issue (labels + board Status) without starting work on it
+create a ticket (labels + board Status; in Jira, in jira.project) without starting work on it
 
 Arguments:
   title                plain descriptive title
@@ -165,6 +168,58 @@ Options:
 Examples:
   nf board list
   nf board list in-review --json
+```
+
+### nanoflow jira login
+
+```text
+Usage: nanoflow jira login [options]
+
+save an Atlassian API token for the repo's Jira site (outside the repo), after checking it works
+
+Options:
+  --site <url>     Jira site (default: jira.site in nanoflow.json)
+  --email <email>  your Atlassian account email
+  --token-stdin    read the API token from stdin instead of prompting
+  -h, --help       display help for command
+
+Create a token at https://id.atlassian.com/manage-profile/security/api-tokens.
+Or skip login and export JIRA_EMAIL + JIRA_API_TOKEN (they win over the saved token).
+
+Examples:
+  nf jira login
+  nf jira login --email me@acme.com --token-stdin < token.txt
+```
+
+### nanoflow jira logout
+
+```text
+Usage: nanoflow jira logout [options]
+
+forget the saved token for the repo's Jira site
+
+Options:
+  --site <url>  Jira site (default: jira.site in nanoflow.json)
+  -h, --help    display help for command
+
+Examples:
+  nf jira logout
+  nf jira logout --site https://acme.atlassian.net
+```
+
+### nanoflow jira whoami
+
+```text
+Usage: nanoflow jira whoami [options]
+
+check the Jira login: which account, and where the token comes from
+
+Options:
+  -h, --help  display help for command
+
+Examples:
+  nf jira whoami
+  nf jira whoami --json
 ```
 
 ### nanoflow title
@@ -529,7 +584,7 @@ Examples:
 ```text
 Usage: nanoflow doctor [options]
 
-check what nanoflow relies on: git, gh + auth, the config, the repo slug, the board
+check what nanoflow relies on: git, gh + auth, the config, the repo slug, the board, the Jira login
 
 Options:
   -h, --help  display help for command

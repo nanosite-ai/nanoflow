@@ -21,6 +21,9 @@ committing anything).
 | `github.board` | none | `{ "owner": "acme", "number": 3 }`: your GitHub Project (v2). Its ids are looked up once and cached in `.git/nanoflow/board.json`. Ignored with `ticket.tracker: "jira"`. |
 | `github.board.statuses` | `Backlog`, `Ready`, `In progress`, `In review`, `Done` | Your Status column names per step, e.g. `{ "in-progress": "Doing" }`. |
 | `ticket.tracker` | `"github"` | Where tickets live: `"github"` (issues) or `"jira"`; see [Tickets in Jira](#tickets-in-jira). |
+| `jira.site` / `jira.project` | none / the `keyPattern` prefix | The Jira Cloud site (`https://acme.atlassian.net`) and the project new tickets go to. |
+| `jira.statuses` | `Backlog`, `To Do`, `In Progress`, `In Review`, `Done` | Your workflow's status per step, e.g. `{ "in-review": "Code Review" }`. |
+| `jira.issueTypes` | Bug for bug/fix, else Task | Jira issue type per `--type`, e.g. `{ "feat": "Story" }`. |
 | `ticket.keyPattern` | `"\\d+"`; Jira: `"[A-Z][A-Z0-9]+-\\d+"` | Regex for one ticket key, e.g. `"ED-\\d+"`. |
 | `ticket.branchPattern` | `"(?:^\|/)(<keyPattern>)-"` | Regex; its first group is the ticket key in a branch (`feat/712-x` → 712, `fix/ED-712-x` → ED-712). |
 | `ticket.urlTemplate` | GitHub issue URL | Ticket links; `{ticket}` is the key: `"https://acme.atlassian.net/browse/{ticket}"`. |
@@ -98,32 +101,40 @@ An unknown placeholder is an error in the CLI, so a typo fails loudly instead of
 
 ## Tickets in Jira
 
-With `"ticket": { "tracker": "jira" }` nanoflow never reads, creates, comments on or moves your tickets: it
-names branches and PRs after their keys and links to them. PRs and CI still come from GitHub. (To have Claude
-read or update the Jira tickets themselves, connect Atlassian's MCP server to Claude Code.)
+With `"ticket": { "tracker": "jira" }` tickets are Jira keys (`ED-712`), and nanoflow reads, moves, comments
+on and creates them in Jira the way it does GitHub issues. PRs and CI still come from GitHub.
 
 ```json
 {
   "mainBranch": "develop",
-  "ticket": {
-    "tracker": "jira",
-    "keyPattern": "ED-\\d+",
-    "urlTemplate": "https://acme.atlassian.net/browse/{ticket}",
-    "types": ["feat", "fix", "chore", "refactor"]
-  },
+  "ticket": { "tracker": "jira", "keyPattern": "ED-\\d+", "types": ["feat", "fix", "chore", "refactor"] },
+  "jira": { "site": "https://acme.atlassian.net", "statuses": { "in-review": "Code Review" } },
   "worktree": { "branch": "{type}/{feature}" },
   "pr": { "ticketRef": "scope" }
 }
 ```
 
-- `nf task start ED-712 --title "label overlap" --type fix` → worktree `../<repo>-ED-712-label-overlap`, branch
-  `fix/ED-712-label-overlap`, title `ED-712 · fix/ED-712-label-overlap · label overlap`. nanoflow can't read the
-  ticket, so `--title` (or `--slug`) is required; `--new`, `ticket new` and `board` are GitHub-only.
-- `nf pr create` titles the PR `fix(ED-712): …` and links `[ED-712](https://acme.atlassian.net/browse/ED-712)`
-  in the body, unless the title or body already names the key.
-- The dashboard shows `🎫 ED-712` with its link; its Tickets tab (GitHub's open issues) stays empty.
+**Log in once per machine:** `nf jira login` asks for your Atlassian email and an
+[API token](https://id.atlassian.com/manage-profile/security/api-tokens), checks it, and saves it in
+`~/.claude/nanoflow/credentials.json`, outside the repo. In CI, export `JIRA_EMAIL` + `JIRA_API_TOKEN` instead
+(they win over the saved token). `nf jira whoami` and `nf doctor` show the login.
+
+| Step | GitHub issues | Jira |
+|---|---|---|
+| `nf task start ED-712 --type fix` | issue → In progress, comment | reads the title, → In Progress, comments the branch; worktree `../<repo>-ED-712-<slug>`, branch `fix/ED-712-<slug>` |
+| `nf task start --new "…"` / `nf ticket new "…"` | creates the issue | creates it in `jira.project` (issue type from `jira.issueTypes`: Bug for bug/fix, else Task) |
+| `nf pr create` | `… (#712)` + `Closes #712`, → In review | `fix(ED-712): …` + a link to the ticket, comments the PR link, → In Review |
+| `nf task done` | → Done | → Done |
+| `nf flow`, the dashboard | titles, columns | titles and workflow status; the Tickets tab (GitHub's open issues) stays empty |
+
+- A move goes through whichever transition leads to the status `jira.statuses` names for the step (defaults:
+  `To Do`, `In Progress`, `In Review`, `Done`). A workflow without one is reported, not an error.
+- Not logged in, nothing breaks: `nf task start ED-712 --title "…"` still names the worktree, branch and PR,
+  and tells you each move it couldn't make.
 - `keyPattern` defaults to any Jira key (`[A-Z][A-Z0-9]+-\d+`); narrow it to your project's (`ED-\d+`) so other
-  keys in branch names aren't mistaken for tickets.
+  keys in branch names aren't mistaken for tickets. It also sets the default `jira.project` (`ED`).
+- The `jira.site` gives ticket links `<site>/browse/ED-712`; `ticket.urlTemplate` overrides them.
+- The dashboard reads Jira through `nanoflow flow --json` (its `provider`, which `nf init` sets up).
 
 ## Pane actions
 

@@ -10,7 +10,8 @@ import { c, info, result, success, warn } from "../lib/output.mjs";
 import { run, runAnyExit, tail, tryRun } from "../lib/proc.mjs";
 import { requireRepo, type RepoContext } from "../lib/repo.mjs";
 import { attachShotsToBody, shotRepoPath, shotsFolder, uploadShots } from "../lib/shots.mjs";
-import { advanceTask, boardNote, currentTask } from "../lib/task.mjs";
+import { jiraClient } from "../lib/jira.mjs";
+import { advanceTask, currentTask } from "../lib/task.mjs";
 import { ticketJson, ticketRef, ticketUrl } from "../lib/tickets.mjs";
 
 /** The body line that links the ticket: `Closes #712` (GitHub closes it on merge), else `[ED-712](url)`. */
@@ -74,7 +75,7 @@ export const registerPr = (program: Command): void => {
     .option("--draft", "open as a draft")
     .option("--no-push", "don't push the branch first")
     .addHelpText("after", ["", "Examples:", "  nf pr create", '  nf pr create --title "feat(web): add csv export" --body-file pr.md', "  nf pr create --body-file pr.md --shots before.png after.png"].join("\n"))
-    .action((opts: { title?: string; body?: string; bodyFile?: string; shots?: string[]; draft?: boolean; push?: boolean }, cmd: Command) => {
+    .action(async (opts: { title?: string; body?: string; bodyFile?: string; shots?: string[]; draft?: boolean; push?: boolean }, cmd: Command) => {
       const t = currentTask();
       const { repo } = t;
       const cwd = repo.checkoutRoot;
@@ -108,8 +109,11 @@ export const registerPr = (program: Command): void => {
         setPrBody(repo, number, attachShotsToBody(body, uploaded.map((u) => u.markdown)));
         success(`${uploaded.length} screenshot(s) attached`);
       }
-      advanceTask(t, number, STATUS.inReview);
-      result({ pr: number, url, title, issue: ticketJson(repo.config, t.ticket) }, () => success(boardNote(repo, t.ticket, STATUS.inReview)));
+      // GitHub links the PR to its issue through `Closes #N`; a Jira ticket gets a comment with the link.
+      const jira = repo.config.ticket.tracker === "jira" ? jiraClient(repo.config).client : null;
+      if (jira) await jira.comment(t.ticket, `Pull request: [${title}|${url}]`).catch((err: Error) => warn(`${t.ticket}: no comment (${err.message})`));
+      const { note } = await advanceTask(t, number, STATUS.inReview);
+      result({ pr: number, url, title, issue: ticketJson(repo.config, t.ticket), ticketNote: note }, () => success(note));
     });
 
   pr.command("comments")

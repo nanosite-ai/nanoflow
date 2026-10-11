@@ -77,6 +77,17 @@ export interface FlowConfig {
     sections: { ticket: string[]; bug: string[] };
   };
   github: { repo?: string; board: BoardConfig | null };
+  /** With ticket.tracker "jira": the site nanoflow reads and moves tickets on (log in with `nf jira login`). */
+  jira: {
+    /** e.g. "https://acme.atlassian.net". */
+    site: string | null;
+    /** Project key new tickets go to; default: the prefix of ticket.keyPattern ("ED" for "ED-\\d+"). */
+    project: string | null;
+    /** The workflow status per lifecycle step, e.g. { "in-review": "Code Review" }. */
+    statuses: Record<Status, string>;
+    /** Jira issue type per --type, e.g. { "feat": "Story" }; default Bug for bug/fix, else Task. */
+    issueTypes: Record<string, string>;
+  };
   slot: { file: string; key: string; mainSlot: number };
   host: string;
   services: ServiceSpec[];
@@ -123,6 +134,18 @@ export interface FlowConfig {
   teardown: { checklist: string[] };
 }
 
+/** Jira's default workflow names (Jira Software): map yours in jira.statuses. */
+export const DEFAULT_JIRA_STATUSES: Record<Status, string> = {
+  backlog: "Backlog",
+  ready: "To Do",
+  "in-progress": "In Progress",
+  "in-review": "In Review",
+  done: "Done",
+};
+
+/** "ED-\\d+" → "ED": the project a key pattern pins, if it pins one. */
+const projectOf = (keyPattern: string): string | null => /^([A-Z][A-Z0-9_]*)-\\d\+$/.exec(keyPattern)?.[1] ?? null;
+
 export const DEFAULT_CONFIG: FlowConfig = {
   mainBranch: "main",
   ticket: {
@@ -137,6 +160,7 @@ export const DEFAULT_CONFIG: FlowConfig = {
     },
   },
   github: { board: null },
+  jira: { site: null, project: null, statuses: DEFAULT_JIRA_STATUSES, issueTypes: {} },
   slot: { file: ".worktree.json", key: "slot", mainSlot: 0 },
   host: "localhost",
   services: [],
@@ -217,13 +241,17 @@ export const mergeConfig = (raw: unknown): FlowConfig => {
   const rawKey = str(ticket.keyPattern, KEY_PATTERNS[tracker]);
   const keyPattern = validRegex(rawKey) ? rawKey : KEY_PATTERNS[tracker];
   const pattern = str(ticket.branchPattern, branchPatternFor(keyPattern));
+  const jira = sub(r.jira);
+  const site = typeof jira.site === "string" && /^https?:\/\//.test(jira.site) ? jira.site.replace(/\/+$/, "") : null;
+  // With a Jira site, ticket links default to its /browse page.
+  const urlTemplate = typeof ticket.urlTemplate === "string" ? ticket.urlTemplate : tracker === "jira" && site ? `${site}/browse/{ticket}` : null;
   return {
     mainBranch: str(r.mainBranch, d.mainBranch),
     ticket: {
       tracker,
       keyPattern,
       branchPattern: validRegex(pattern) ? pattern : branchPatternFor(keyPattern),
-      ...(typeof ticket.urlTemplate === "string" ? { urlTemplate: ticket.urlTemplate } : {}),
+      ...(urlTemplate ? { urlTemplate } : {}),
       types: isStrings(ticket.types) && ticket.types.length ? ticket.types : d.ticket.types,
       labels: { type: str(labels.type, d.ticket.labels.type), area: str(labels.area, d.ticket.labels.area) },
       sections: {
@@ -233,6 +261,12 @@ export const mergeConfig = (raw: unknown): FlowConfig => {
     },
     // A board moves GitHub issues: without them there is nothing to move.
     github: { ...(typeof gh.repo === "string" ? { repo: gh.repo } : {}), board: github ? boardOf(gh.board) : null },
+    jira: {
+      site,
+      project: typeof jira.project === "string" ? jira.project : projectOf(keyPattern),
+      statuses: { ...DEFAULT_JIRA_STATUSES, ...(isStringMap(jira.statuses) ? jira.statuses : {}) } as Record<Status, string>,
+      issueTypes: isStringMap(jira.issueTypes) ? jira.issueTypes : {},
+    },
     slot: { file: str(slot.file, d.slot.file), key: str(slot.key, d.slot.key), mainSlot: num(slot.mainSlot, d.slot.mainSlot) },
     host: str(r.host, d.host),
     services: Array.isArray(r.services) ? servicesOf(r.services) : d.services,

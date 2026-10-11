@@ -3,7 +3,8 @@ import type { Command } from "commander";
 import { fillTemplate, STATUS, STATUSES, type Status } from "../lib/config.mjs";
 import { createIssue, linkSubIssue, setBoardStatus, boardItems } from "../lib/gh.mjs";
 import { dryRun, parseIssueNumber } from "../lib/globals.mjs";
-import { c, info, result, success } from "../lib/output.mjs";
+import { jiraClient, type Jira, type JiraIssue } from "../lib/jira.mjs";
+import { c, info, result, success, warn } from "../lib/output.mjs";
 import { requireRepo, type RepoContext } from "../lib/repo.mjs";
 import { requireGithubTickets, ticketUrl } from "../lib/tickets.mjs";
 
@@ -69,6 +70,16 @@ export const createTicket = (repo: RepoContext, title: string, opts: NewTicketOp
   return { number, url: ticketUrl(repo, String(number)), title, status };
 };
 
+/** The same body for Jira, whose descriptions are wiki markup: `h3.` headings. */
+const jiraBodyFrom = (repo: RepoContext, type: string, opts: NewTicketOpts): string =>
+  opts.body || opts.bodyFile ? bodyFrom(repo, type, opts) : bodyFrom(repo, type, { ...opts, parent: undefined }).replace(/^### /gm, "h3. ");
+
+/** Create a Jira ticket from the same flags (no labels, no --parent: Jira has its own fields for those). */
+export const createJiraTicket = async (client: Jira, repo: RepoContext, title: string, opts: NewTicketOpts, type: string): Promise<JiraIssue> => {
+  if (opts.parent || opts.area) warn("--parent and --area are GitHub-only: set them in Jira");
+  return client.create({ title, type, body: jiraBodyFrom(repo, type, opts) });
+};
+
 export const addTicketOptions = (cmd: Command): Command =>
   cmd
     .option("--type <type>", "issue type (ticket.types in nanoflow.json; default: the first one)")
@@ -81,15 +92,25 @@ export const addTicketOptions = (cmd: Command): Command =>
     .option("--parent <issue>", "link as a sub-issue of this epic");
 
 export const registerTicket = (program: Command): void => {
-  const ticket = program.command("ticket").description("GitHub issues in your ticket anatomy");
+  const ticket = program.command("ticket").description("tickets in your ticket anatomy: GitHub issues, or Jira (ticket.tracker)");
 
-  addTicketOptions(ticket.command("new").description("create an issue (labels + board Status) without starting work on it").argument("<title>", "plain descriptive title"))
+  addTicketOptions(ticket.command("new").description("create a ticket (labels + board Status; in Jira, in jira.project) without starting work on it").argument("<title>", "plain descriptive title"))
     .option("--status <status>", `board Status: ${STATUSES.join(" | ")}`, STATUS.ready)
     .addHelpText("after", '\nExamples:\n  nanoflow ticket new "csv export for orders" --definition "…"\n  nf ticket new "checkout 500 on empty cart" --type bug --status backlog\n  nf ticket new "phase 2" --parent 650 --body-file plan.md')
-    .action((title: string, opts: NewTicketOpts, cmd: Command) => {
+    .action(async (title: string, opts: NewTicketOpts, cmd: Command) => {
       const repo = requireRepo();
-      requireGithubTickets(repo.config, "nf ticket new");
       if (dryRun(cmd, `would create "${title}" → ${opts.status}`)) return;
+      if (repo.config.ticket.tracker === "jira") {
+        const { client, reason } = jiraClient(repo.config);
+        if (!client) throw new Error(`Creating a Jira ticket needs Jira access: ${reason}.`);
+        const type = opts.type ?? repo.config.ticket.types[0];
+        if (!repo.config.ticket.types.includes(type)) throw new Error(`Unknown type "${type}". Use one of: ${repo.config.ticket.types.join(", ")}.`);
+        const created = await createJiraTicket(client, repo, title, opts, type);
+        // A new Jira ticket starts in its workflow's first status; move it only when asked to.
+        const note = cmd.getOptionValueSource("status") === "default" ? null : (await client.moveTo(created.key, parseStatus(opts.status ?? STATUS.ready))).note;
+        result(created, () => success(`${created.key} ${created.title}${note ? ` (${note})` : ""}  ${created.url}`));
+        return;
+      }
       const created = createTicket(repo, title, opts, STATUS.ready);
       result(created, () => success(`#${created.number} ${created.title} → ${created.status}  ${created.url}`));
     });
