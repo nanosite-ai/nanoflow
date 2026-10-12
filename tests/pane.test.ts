@@ -90,4 +90,20 @@ describe('dashboard pane', () => {
     const { text } = await $.command.run({ command: 'nanoflow', args: '' })
     expect(text).toContain('not shown: no attached surface places panes')
   })
+
+  test('opens the dashboard when the desktop app attaches, unless it is up', async ($, on) => {
+    const opened: string[] = []
+    let panes: Array<{ id: string }> = []
+    on('ui.panes', () => ({ value: panes }))
+    on('ui.open', ($, e) => {
+      opened.push(e.id)
+      return { value: { isPlaced: true } }
+    })
+    on('session.attach', ($, e) => ({ clientId: e.clientId }))
+    await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+    expect(opened).toEqual(['nanoflow'])
+    panes = [{ id: 'nanoflow' }]
+    await $.session.attach({ surface: 'desktop', clientId: 'desktop:2' })
+    expect(opened).toEqual(['nanoflow'])
+  })
 })
