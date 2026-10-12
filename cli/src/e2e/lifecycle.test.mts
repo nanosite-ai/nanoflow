@@ -296,7 +296,38 @@ describe("the task lifecycle", { timeout: 120_000 }, () => {
     expect(res.code, res.stderr).toBe(0);
     expect(existsSync(WT)).toBe(false);
     expect(git(MAIN, "branch", "--list", "feat/7-csv-export")).toBe("");
+    expect(git(MAIN, "worktree", "list")).not.toContain("7-csv-export");
     expect(res.stdout).toContain("Agent cleanup");
+  });
+
+  test("wt remove ignores line-ending-only changes (npm rewrites bin shims as LF)", () => {
+    expect(nf(MAIN, "wt", "create", "10-eol", "--json").code).toBe(0);
+    const dir = path.join(ROOT, "demo-10-eol");
+    git(MAIN, "config", "core.autocrlf", "true");
+    try {
+      // Checked out as CRLF, then rewritten as LF the way npm rewrites a bin shim: same content.
+      rmSync(path.join(dir, "pass.mjs"));
+      git(dir, "checkout", "--", "pass.mjs");
+      writeFileSync(path.join(dir, "pass.mjs"), "console.log('all good');\n");
+      expect(git(dir, "status", "--porcelain")).toContain("pass.mjs");
+
+      const res = nf(MAIN, "wt", "remove", "10-eol", "--delete-branch", "--yes");
+      expect(res.code, res.stderr).toBe(0);
+      expect(existsSync(dir)).toBe(false);
+    } finally {
+      git(MAIN, "config", "--unset", "core.autocrlf");
+    }
+  });
+
+  test("wt remove still refuses a real edit", () => {
+    expect(nf(MAIN, "wt", "create", "11-edit", "--json").code).toBe(0);
+    const dir = path.join(ROOT, "demo-11-edit");
+    writeFileSync(path.join(dir, "pass.mjs"), "console.log('changed');\n");
+    const res = nf(MAIN, "wt", "remove", "11-edit", "--yes");
+    expect(res.code).toBe(1);
+    expect(res.stderr).toContain("uncommitted changes");
+    expect(res.stderr).toContain("pass.mjs");
+    expect(existsSync(dir)).toBe(true);
   });
 
   test("wt remove refuses unpushed work", () => {

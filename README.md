@@ -148,7 +148,7 @@ tested, the same every time.
 | Why it helps an agent | How |
 |---|---|
 | **Small outputs** | `nf check` prints one line per check and only the tail of a failure. `nf ci --watch --failed-log` waits without a poll loop and returns only the failing steps. `nf pr comments` returns unresolved threads, one line each. |
-| **One call, not ten** | `task start`, `pr create` (push + valid title + `Closes #N` + screenshots + board + title), `wt remove` (stop processes, delete, prune, branch). |
+| **One call, not ten** | `task start`, `pr create` (push + valid title + `Closes #N` + screenshots + board + title), `wt remove` (stop processes, move to a trash deleted in the background so it returns in ~1s, prune, branch). |
 | **Never blocks** | No prompts without a TTY. A command that needs a yes fails fast and names `--yes`. |
 | **Parseable** | `--json` on every command; progress goes to stderr. |
 | **Safe** | `--dry` on everything that writes. `wt remove` refuses uncommitted or unpushed work. Teardown and anything destructive need an explicit yes. |

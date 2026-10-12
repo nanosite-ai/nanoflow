@@ -70,7 +70,9 @@ nf wt remove <name> --delete-branch    # one worktree; stops its processes first
 nf wt clean --yes                      # every worktree whose PR is merged/closed
 ```
 
-`remove` refuses uncommitted or unpushed work unless `--force`. Then do what the CLI can't:
+`remove` refuses uncommitted or unpushed work unless `--force` (line-ending-only changes, like npm rewriting a
+bin shim, don't count). It returns in about a second: the worktree is renamed into `../.<repo>-trash` and
+deleted in the background. Then do what the CLI can't:
 
 - close any browser you opened for verification (Playwright MCP: `browser_close`);
 - delete the screenshots and recordings you saved locally (only your own files).
