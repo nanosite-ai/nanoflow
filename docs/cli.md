@@ -18,7 +18,7 @@ Every command takes `--json` (result on stdout, progress on stderr), `--dry` (pr
 | [`nanoflow title`](#nanoflow-title) | (re)apply the session + terminal title for the current task branch |
 | [`nanoflow wt create`](#nanoflow-wt-create) | add a worktree + branch for <ticket>-<slug> on the next free port slot; copy and patch shared files; install |
 | [`nanoflow wt list`](#nanoflow-wt-list) | worktrees with their slot, branch and ports |
-| [`nanoflow wt remove`](#nanoflow-wt-remove) | stop the worktree's processes, delete it, prune (refuses uncommitted/unpushed work unless --force); prints the agent cleanup checklist |
+| [`nanoflow wt remove`](#nanoflow-wt-remove) | stop the worktree's processes, move it to a trash dir deleted in the background (returns in ~1s), prune (refuses uncommitted/unpushed work unless --force; line-ending-only changes don't count); prints the agent cleanup checklist |
 | [`nanoflow wt clean`](#nanoflow-wt-clean) | remove every worktree whose PR is merged or closed (asks first; --yes to confirm non-interactively) |
 | [`nanoflow env`](#nanoflow-env) | this checkout's slot: each service's port and URL, and the env `up` exports |
 | [`nanoflow up`](#nanoflow-up) | start this checkout's services on its slot ports, wait until they answer, print the URLs |
@@ -261,7 +261,8 @@ Examples:
 ```text
 Usage: nanoflow wt remove [options] <name>
 
-stop the worktree's processes, delete it, prune (refuses uncommitted/unpushed work unless --force);
+stop the worktree's processes, move it to a trash dir deleted in the background (returns in ~1s),
+prune (refuses uncommitted/unpushed work unless --force; line-ending-only changes don't count);
 prints the agent cleanup checklist
 
 Arguments:

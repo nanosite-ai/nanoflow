@@ -8,6 +8,7 @@ import { killTree, processesInDir } from "./kill.mjs";
 import { c, info, step, success, warn } from "./output.mjs";
 import { run, runInherit, tryRun } from "./proc.mjs";
 import { ensureExcluded, type RepoContext } from "./repo.mjs";
+import { emptyTrashInBackground, moveToTrash, trashRootFor } from "./trash.mjs";
 
 export interface WorktreeMeta {
   feature: string;
@@ -196,31 +197,63 @@ export const createWorktree = (repo: RepoContext, feature: string, opts: { slot?
   return dir;
 };
 
+/**
+ * Uncommitted work: untracked files, and tracked edits that are more than line endings. npm rewrites
+ * package bin shims with LF on install, so under core.autocrlf=true a fresh worktree shows them as
+ * modified while their content is unchanged. Those must not block a teardown.
+ */
+const uncommittedWork = (dir: string): string[] => {
+  const lines = (out: string | null): string[] => (out ?? "").split("\n").filter(Boolean);
+  const edited = lines(tryRun("git", ["diff", "HEAD", "--ignore-cr-at-eol", "--name-only"], { cwd: dir }));
+  const untracked = lines(tryRun("git", ["ls-files", "--others", "--exclude-standard"], { cwd: dir }));
+  return [...edited.map((f) => ` M ${f}`), ...untracked.map((f) => `?? ${f}`)];
+};
+
 /** Refuse to delete work that exists nowhere else: uncommitted changes, or commits on no remote. */
 const assertSafeToRemove = (dir: string, branch: string, allowUnpushed: boolean): void => {
-  const dirty = tryRun("git", ["status", "--porcelain"], { cwd: dir }) ?? "";
-  if (dirty) throw new Error(`Worktree has uncommitted changes:\n${dirty}\nCommit + push them, or pass --force to discard.`);
+  const dirty = uncommittedWork(dir);
+  if (dirty.length) throw new Error(`Worktree has uncommitted changes:\n${dirty.join("\n")}\nCommit + push them, or pass --force to discard.`);
   if (allowUnpushed || !branchExists(dir, branch)) return;
   const unpushed = tryRun("git", ["log", "--oneline", branch, "--not", "--remotes"], { cwd: dir }) ?? "";
   if (unpushed) throw new Error(`Branch ${branch} has commits on no remote:\n${unpushed}\nPush them, or pass --force to discard.`);
 };
 
+/** Synchronous delete, used only when the dir can't be renamed into the trash. */
+const deleteNow = (dir: string): void => {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 });
+  } catch (err) {
+    throw new Error(`Could not delete ${dir} (${(err as { code?: string }).code}): close editors/terminals opened in it, then retry.`);
+  }
+};
+
 /**
- * Stop its processes, delete the dir, prune, optionally delete the branch. Not `git worktree remove`: it
- * refuses worktrees with submodules and leaves half-deleted node_modules behind on Windows.
+ * Stop its processes, move the dir into the trash, prune, optionally delete the branch, then delete the
+ * trash in the background so this returns in about a second. Not `git worktree remove`: it refuses
+ * worktrees with submodules and leaves half-deleted node_modules behind on Windows.
  */
 export const removeWorktree = (repo: RepoContext, wt: { dir: string; branch: string }, opts: { force?: boolean; deleteBranch?: boolean; allowUnpushed?: boolean }): void => {
-  if (!opts.force && existsSync(wt.dir)) assertSafeToRemove(wt.dir, wt.branch, Boolean(opts.allowUnpushed));
+  const exists = existsSync(wt.dir);
+  if (!opts.force && exists) assertSafeToRemove(wt.dir, wt.branch, Boolean(opts.allowUnpushed));
   const killed = killTree(processesInDir(wt.dir));
   if (killed.length) info(c.dim(`stopped ${killed.length} process(es) holding ${wt.dir}`));
-  try {
-    rmSync(wt.dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 });
-  } catch (err) {
-    throw new Error(`Could not delete ${wt.dir} (${(err as { code?: string }).code}): close editors/terminals opened in it, then retry.`);
+  const trash = trashRootFor(repo.mainRoot, wt.dir);
+  let trashed = false;
+  if (exists) {
+    try {
+      moveToTrash(trash, wt.dir);
+      trashed = true;
+    } catch (err) {
+      warn(`could not move ${path.basename(wt.dir)} to the trash (${(err as { code?: string }).code}); deleting it now instead`);
+      deleteNow(wt.dir);
+    }
   }
   run("git", ["worktree", "prune"], { cwd: repo.mainRoot });
   if (opts.deleteBranch && branchExists(repo.mainRoot, wt.branch)) run("git", ["branch", "-D", wt.branch], { cwd: repo.mainRoot });
-  success(`removed ${path.basename(wt.dir)}${opts.deleteBranch ? ` + branch ${wt.branch}` : ""}`);
+  if (trashed) emptyTrashInBackground(trash);
+  success(
+    `removed ${path.basename(wt.dir)}${opts.deleteBranch ? ` + branch ${wt.branch}` : ""}${trashed ? c.dim(" (files are deleted in the background)") : ""}`,
+  );
 };
 
 /** The teardown steps the CLI can't do itself (the agent's browser, its local files). */

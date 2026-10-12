@@ -55,7 +55,7 @@ export const registerWt = (program: Command): void => {
     });
 
   wt.command("remove")
-    .description("stop the worktree's processes, delete it, prune (refuses uncommitted/unpushed work unless --force); prints the agent cleanup checklist")
+    .description("stop the worktree's processes, move it to a trash dir deleted in the background (returns in ~1s), prune (refuses uncommitted/unpushed work unless --force; line-ending-only changes don't count); prints the agent cleanup checklist")
     .argument("<name>", "worktree name, e.g. 563-worktree-teardown")
     .option("--delete-branch", "also delete the local branch")
     .option("--force", "discard uncommitted / unpushed work")
