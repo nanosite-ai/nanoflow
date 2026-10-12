@@ -39,6 +39,10 @@ Claude Code, and turns every ritual into one deterministic command.
 
 <p align="center"><img src="docs/media/demo.gif" alt="nanoflow in Claude Code: the agent picks up the dark mode ticket, which gets its own worktree and ports, writes the change, runs the checks and opens a PR. The pane beside the chat shows every worktree with its ticket, board column, PR, CI and ports, and updates live as CI goes green, the PR merges and the worktree is torn down" width="100%"></p>
 
+It works in the Claude desktop app too:
+
+<p align="center"><img src="docs/media/claude-desktop.png" alt="The nanoflow pane docked beside a chat in the Claude desktop app, listing the demo shop's five worktrees with their tickets, PRs, CI and ports" width="100%"></p>
+
 - **Your session's worktree is framed and badged**, so you always know where *this* agent is.
 - **Everything is a link**: the ticket, the PR, the failing CI run, each running service, the worktree folder.
 - **Select a worktree for actions**: ▶ Pick up its ticket (Claude moves it to In progress and plans the
