@@ -5,7 +5,7 @@ import { diffSnapshots, mergeLocal } from '../hooks/diff'
 import { stagesOf, statusLine } from '../hooks/progress'
 import { browserEventOf, causeOf, DETAIL_LINES, matchRule, outputDetail, toastFor } from '../hooks/rules'
 import { applyFlowResult, buildFlowQuery, ciRollup, parseWorktreeList, slugFromRemote, ticketKeyOf } from '../hooks/scan'
-import { COLOR, folderUrl, isPickable, statusColor } from '../hooks/view'
+import { COLOR, folderUrl, isDone, isPickable, statusColor } from '../hooks/view'
 
 const wt = (over: Partial<NfWorktree> = {}): NfWorktree => ({
   name: 'repo-712-x',
@@ -162,6 +162,18 @@ describe('scan helpers', () => {
     expect(isPickable(wt({ ticket: { ...ticket('Ready'), state: 'CLOSED' } }))).toBe(false)
     expect(isPickable(wt({ ticket: null }))).toBe(false)
     expect(isPickable(wt({ ticket: ticket('Ready'), isMain: true }))).toBe(false)
+  })
+
+  test('a worktree is done once its PR merges or closes, or its ticket closes', () => {
+    const pr = (state: string) => ({ number: 8, url: 'u', state, ci: 'none' as const, ciUrl: null })
+    const ticket = (state: string) => ({ number: 7, title: 'x', url: 'u', state, status: null, worktree: 'repo-7-x' })
+    expect(isDone(wt({ ticket: ticket('OPEN'), pr: null }))).toBe(false)
+    expect(isDone(wt({ ticket: ticket('OPEN'), pr: pr('OPEN') }))).toBe(false)
+    expect(isDone(wt({ ticket: ticket('OPEN'), pr: pr('MERGED') }))).toBe(true)
+    expect(isDone(wt({ ticket: ticket('OPEN'), pr: pr('CLOSED') }))).toBe(true)
+    expect(isDone(wt({ ticket: ticket('CLOSED'), pr: null }))).toBe(true)
+    expect(isDone(wt({ ticket: ticket('CLOSED'), pr: pr('OPEN') }))).toBe(true)
+    expect(isDone(wt({ ticket: ticket('CLOSED'), isMain: true }))).toBe(false)
   })
 })
 

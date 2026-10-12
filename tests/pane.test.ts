@@ -84,4 +84,10 @@ describe('dashboard pane', () => {
     expect(prompts).toEqual(['Pick up ticket #7 (dark mode) in the worktree at C:/dev/repo-7-dark-mode: move it to In progress, then read the ticket and plan the work.'])
     await ui.unmount()
   })
+
+  test('/nanoflow says why when the app does not show the pane', async ($, on) => {
+    on('ui.open', { id: 'nanoflow' }, () => ({ value: { isPlaced: false, reason: 'no attached surface places panes' } }))
+    const { text } = await $.command.run({ command: 'nanoflow', args: '' })
+    expect(text).toContain('not shown: no attached surface places panes')
+  })
 })

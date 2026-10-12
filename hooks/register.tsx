@@ -1,7 +1,7 @@
 // nanoflow: the dev workflow, live. A dashboard pane, a progress status line and toasts, fed by the repo's
 // provider command (e.g. `ns flow --json`) or the built-in git/gh scanner, plus the session's own tool calls.
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, UiOpenResult } from 'claude-code'
 import type { NfActivity, NfCheck, NfService, NfSnapshot, NfSource, NfTab, NfTicket, NfWorktree } from '../types'
 import { ACTION, DEFAULT_CONFIG, fillTemplate, mergeConfig, starterConfig, type NfActionKey, type NfConfig } from './config'
 import { diffSnapshots, mergeLocal, ticketLabel, type NfEvent } from './diff'
@@ -367,7 +367,7 @@ const handlers = ($: $): PaneHandlers => ({
   },
 })
 
-const openPane = ($: $, tab?: NfTab): Promise<unknown> =>
+const openPane = ($: $, tab?: NfTab): Promise<UiOpenResult> =>
   (async () => {
     if (tab) await update($, tabAtom, () => tab)
     return $.ui.open({ id: PANE, title: 'nanoflow' })
@@ -442,7 +442,9 @@ export const register: Register = (on, options) => {
       return { text: `Wrote ${target}: set your services' ports, rules and actions, then commit it so the team shares it.` }
     }
     const tab: NfTab = arg === 'tickets' ? 'tickets' : arg === 'activity' ? 'activity' : 'worktrees'
-    await openPane($, tab)
+    const opened = await openPane($, tab)
+    // Open but undrawn (a narrow terminal, or an app that places no panes): say why instead of a bare tab name.
+    if (!opened.isPlaced) return { text: `nanoflow: the dashboard is open but not shown: ${opened.reason}` }
     return { text: `nanoflow: ${tab}.` }
   }).catch(() => ({ text: 'nanoflow: that failed; run `claude --debug` for the reason.' }))
 

@@ -77,6 +77,10 @@ export const isPickable = (wt: NfWorktree): boolean => {
   return !['progress', 'review', 'done'].some(word => s.includes(word))
 }
 
+/** A worktree's work is over: its PR merged or closed, or its ticket closed. Offered for teardown. */
+export const isDone = (wt: NfWorktree): boolean =>
+  !wt.isMain && (wt.pr?.state === 'MERGED' || wt.pr?.state === 'CLOSED' || wt.ticket?.state === 'CLOSED')
+
 const ago = (now: number, iso: string): string => {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000))
   return s < 60 ? `${s}s ago` : `${Math.round(s / 60)}m ago`
@@ -113,7 +117,7 @@ const WorktreeCard = (el: PaneElements, data: PaneData, on: PaneHandlers, wt: Nf
   const title = wt.ticket?.title ? truncate(wt.ticket.title, Math.max(10, width - wt.name.length - 30)) : null
   const ci = wt.pr ? CI_LOOK[wt.pr.ci] : undefined
   const pr = wt.pr ? PR_LOOK[wt.pr.state] ?? PR_LOOK.OPEN : undefined
-  const merged = wt.pr?.state === 'MERGED' || wt.pr?.state === 'CLOSED'
+  const done = isDone(wt)
   const open = wt.services.find(s => s.isUp && s.name === data.openService) ?? wt.services.find(s => s.isUp)
   const icon = wt.isMain ? '🏠' : wt.services.some(s => s.isUp) ? '🚀' : '🌿'
   const k = (part: string): string => `${part}-${wt.path}`
@@ -161,8 +165,8 @@ const WorktreeCard = (el: PaneElements, data: PaneData, on: PaneHandlers, wt: Nf
         wt.pr && <Link key={k('open-pr')} href={wt.pr.url} label="🔀 Open PR ↗" />,
         wt.ticket && <Link key={k('open-ticket')} href={wt.ticket.url} label="🎫 Open ticket ↗" />,
         <Button key={k('copy')} label="📋 Copy path" onPress={() => on.copyPath(wt)} />,
-        data.can.teardown && !wt.isMain && merged && <Button key={k('teardown')} label="🧹 Teardown" onPress={() => on.teardown(wt)} />,
-        data.can.teardown && !wt.isMain && !merged && <Text key={k('teardown-later')} dimColor>🧹 teardown once the PR is merged</Text>,
+        data.can.teardown && done && <Button key={k('teardown')} label="🧹 Teardown" onPress={() => on.teardown(wt)} />,
+        data.can.teardown && !wt.isMain && !done && <Text key={k('teardown-later')} dimColor>🧹 teardown once the PR is merged or the ticket closed</Text>,
       ], { indent: true })}
     </Box>
   )
@@ -175,7 +179,7 @@ const Fleet = (el: PaneElements, snapshot: NfSnapshot) => {
   const running = trees.filter(w => w.services.some(s => s.isUp)).length
   const prs = trees.filter(w => w.pr?.state === 'OPEN').length
   const red = trees.filter(w => w.pr?.state === 'OPEN' && w.pr.ci === 'fail').length
-  const done = trees.filter(w => !w.isMain && (w.pr?.state === 'MERGED' || w.pr?.state === 'CLOSED')).length
+  const done = trees.filter(isDone).length
   return Row(el, 'fleet', [
     <Text key="fleet-trees" bold>{`🌳 ${trees.length} worktrees`}</Text>,
     <Text key="fleet-running" color={running ? COLOR.ok : COLOR.muted}>{`🚀 ${running} running`}</Text>,
