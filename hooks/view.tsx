@@ -23,6 +23,8 @@ export type PaneData = {
   /** Which action buttons the repo configured. */
   can: { pickUp: boolean; startDev: boolean; stopDev: boolean; teardown: boolean; startTask: boolean; newTicket: boolean }
   openService: string | null
+  /** nanoflow's own version, for the footer. */
+  version: string | null
 }
 
 export type PaneHandlers = {
@@ -102,7 +104,6 @@ const Tabs = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
     )),
     <Button key="refresh" label="🔄 Refresh" hotkey="r" onPress={on.refresh} />,
     <Text key="updated" dimColor>{`${updated} · ${from}`}</Text>,
-    <Text key="brand" color={COLOR.current} dimColor>nanoflow by nanosite.ai</Text>,
     data.busy !== null && <Text key="busy" color={COLOR.wait} bold>{`⏳ ${data.busy}`}</Text>,
   ])
 }
@@ -278,6 +279,7 @@ export const PaneView = (el: PaneElements, data: PaneData, on: PaneHandlers) => 
       {data.tab === 'worktrees' && WorktreesTab(el, data, on)}
       {data.tab === 'tickets' && TicketsTab(el, data, on)}
       {data.tab === 'activity' && ActivityTab(el, data, on)}
+      <Text key="brand" color={COLOR.current} dimColor>{`nanoflow${data.version ? ` v${data.version}` : ''} by nanosite.ai`}</Text>
     </Box>
   )
 }

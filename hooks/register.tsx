@@ -40,6 +40,7 @@ const S = {
   wantsFull: false,
   providerWarned: false,
   toastLevel: 'all',
+  version: undefined as string | null | undefined,
 }
 
 // ─── host I/O: git, gh, the provider, liveness probes ($ cannot cross an import, so it all lives here) ──
@@ -172,6 +173,17 @@ const builtinSnapshot = async ($: $, full: boolean): Promise<NfSnapshot> => {
     current: containing?.path ?? null,
     worktrees: trees,
     board,
+  }
+}
+
+/** This plugin's version, from its manifest; null when it states none. */
+const pluginVersion = async ($: $): Promise<string | null> => {
+  const text = await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`).catch(() => null)
+  try {
+    const { version } = JSON.parse(text ?? '{}') as { version?: unknown }
+    return typeof version === 'string' ? version : null
+  } catch {
+    return null
   }
 }
 
@@ -530,6 +542,7 @@ export const register: Register = (on, options) => {
     const el = $.ui.resolve(e)
     const source: NfSource = await read($, sourceAtom)
     const openService = S.config.services.find(s => s.open)?.name ?? null
+    if (S.version === undefined) S.version = await pluginVersion($)
     return PaneView(el, {
       snapshot: await read($, snapshotAtom),
       activity: await read($, activityAtom),
@@ -550,6 +563,7 @@ export const register: Register = (on, options) => {
         newTicket: Boolean(S.config.actions.newTicket),
       },
       openService,
+      version: S.version,
     }, handlers($))
   })
 }

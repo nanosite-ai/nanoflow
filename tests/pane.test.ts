@@ -17,10 +17,12 @@ const tree = (name: string, status: string | null): NfWorktree => ({
 describe('dashboard pane', () => {
   test('draws its tabs on every surface that takes input, and switches tab', async ($, on) => {
     mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
+    on('fs.read', ($, e, next) => (/\.claude-plugin[\\/]plugin\.json$/.test(e.path) ? { value: '{ "version": "9.9.9" }' } : next(e)))
     for (const surface of ['terminal', 'desktop'] as const) {
       const ui = await $.ui.mount({ plugin: 'nanoflow', surface, ...PANE })
       expect(await ui.find({ key: 'tab-worktrees' })).toBeDefined()
       expect(await ui.find({ key: 'refresh' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'nanoflow v9.9.9 by nanosite.ai' })).toBeDefined()
       await ui.press({ key: 'tab-activity' })
       expect(await ui.find({ type: 'Text', text: /Nothing yet/ })).toBeDefined()
       await ui.press({ key: 'tab-worktrees' })
