@@ -411,6 +411,14 @@ export const register: Register = (on, options) => {
     return started
   })
 
+  // The desktop app starts its session without a person at the prompt and joins it afterwards: open the
+  // dashboard when an app attaches, unless it is already up.
+  on('session.attach', async ($, e, next) => {
+    const attached = await next(e)
+    if (openPaneOnStart && !(await $.ui.panes()).some(pane => pane.id === PANE)) void openPane($)
+    return attached
+  }).catch(($, e, next) => next(e))
+
   on('classic.CwdChanged', async ($, e, next) => {
     const ran = await next(e)
     S.cwd = e.new_cwd
