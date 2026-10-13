@@ -31,6 +31,40 @@ export const isInside = (dir: string, root: string, win: boolean): boolean => {
 
 export const baseName = (p: string): string => normalizePath(p).split('/').pop() ?? p
 
+type Tree = { path: string; isMain: boolean }
+
+const deepest = <T extends Tree>(trees: readonly T[]): T | undefined => [...trees].sort((a, b) => b.path.length - a.path.length)[0]
+
+/** A worktree's path as text may spell it: `C:/x` or Git Bash's `/c/x`, and with backslashes. */
+const spellings = (path: string, win: boolean): string[] => {
+  const p = win ? normalizePath(path).toLowerCase() : normalizePath(path)
+  const drive = /^([a-z]):\//i.exec(p)
+  return drive ? [p, `/${drive[1]}/${p.slice(3)}`] : [p]
+}
+
+const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * The worktree a session that started in the main checkout works in: the deepest other worktree its tool
+ * input names (a file path, a command). Null when the session started inside a worktree of its own, which
+ * its cwd already says, or the input names none.
+ */
+export const focusFrom = (trees: readonly Tree[], cwd: string, text: string, win: boolean): string | null => {
+  const home = deepest(trees.filter(t => isInside(cwd, t.path, win)))
+  if (home && !home.isMain) return null
+  const slashed = text.replace(/\\/g, '/')
+  const hay = win ? slashed.toLowerCase() : slashed
+  // A whole path: nano-site must not match inside nano-site-832-x.
+  const named = trees.filter(t => !t.isMain && spellings(t.path, win).some(p => new RegExp(`${escapeRegex(p)}(?![\\w.-])`).test(hay)))
+  return deepest(named)?.path ?? null
+}
+
+/** The snapshot with `focus` as the session's worktree; unchanged when focus names none of its worktrees. */
+export const withFocus = (snapshot: NfSnapshot, focus: string | null, win: boolean): NfSnapshot => {
+  if (!focus || !snapshot.worktrees.some(t => samePath(t.path, focus, win))) return snapshot
+  return { ...snapshot, current: focus, worktrees: snapshot.worktrees.map(t => ({ ...t, isCurrent: samePath(t.path, focus, win) })) }
+}
+
 export type GitWorktree = { path: string; branch: string | null }
 
 export const parseWorktreeList = (porcelain: string): GitWorktree[] => {

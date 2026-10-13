@@ -4,7 +4,7 @@ import { ACTION, DEFAULT_CONFIG, fillTemplate, mergeConfig } from '../hooks/conf
 import { diffSnapshots, mergeLocal } from '../hooks/diff'
 import { stagesOf, statusLine } from '../hooks/progress'
 import { browserEventOf, causeOf, DETAIL_LINES, matchRule, outputDetail, toastFor } from '../hooks/rules'
-import { applyFlowResult, buildFlowQuery, ciRollup, parseWorktreeList, slugFromRemote, ticketKeyOf } from '../hooks/scan'
+import { applyFlowResult, buildFlowQuery, ciRollup, focusFrom, parseWorktreeList, slugFromRemote, ticketKeyOf, withFocus } from '../hooks/scan'
 import { COLOR, folderUrl, isDone, isPickable, statusColor } from '../hooks/view'
 
 const wt = (over: Partial<NfWorktree> = {}): NfWorktree => ({
@@ -174,6 +174,34 @@ describe('scan helpers', () => {
     expect(isDone(wt({ ticket: ticket('CLOSED'), pr: null }))).toBe(true)
     expect(isDone(wt({ ticket: ticket('CLOSED'), pr: pr('OPEN') }))).toBe(true)
     expect(isDone(wt({ ticket: ticket('CLOSED'), isMain: true }))).toBe(false)
+  })
+})
+
+describe("the session's worktree", () => {
+  const trees = [
+    { path: 'C:/dev/repo', isMain: true },
+    { path: 'C:/dev/repo-712-x', isMain: false },
+    { path: 'C:/dev/repo-71-y', isMain: false },
+  ]
+
+  test('a session in the main checkout follows the worktree its tools name', () => {
+    expect(focusFrom(trees, 'C:\\dev\\repo', 'C:\\Dev\\repo-712-x\\src\\a.ts', true)).toBe('C:/dev/repo-712-x')
+    expect(focusFrom(trees, 'C:/dev/repo', 'cd "C:/dev/repo-71-y" && npm test', true)).toBe('C:/dev/repo-71-y')
+    expect(focusFrom(trees, 'C:/dev/repo', 'cd /c/dev/repo-712-x && git status', true)).toBe('C:/dev/repo-712-x')
+  })
+
+  test('the main checkout, a longer name and a session started in a worktree do not move it', () => {
+    expect(focusFrom(trees, 'C:/dev/repo', 'C:/dev/repo/README.md', true)).toBe(null)
+    expect(focusFrom(trees, 'C:/dev/repo', 'C:/dev/repo-712-xyz/a.ts', true)).toBe(null)
+    expect(focusFrom(trees, 'C:/dev/repo-71-y', 'C:/dev/repo-712-x/a.ts', true)).toBe(null)
+  })
+
+  test("withFocus marks one worktree as the session's", () => {
+    const s = snap([wt({ path: 'C:/dev/repo', isMain: true, isCurrent: true }), wt({ isCurrent: false })])
+    const moved = withFocus(s, 'c:/dev/repo-712-x', true)
+    expect(moved.worktrees.map(w => w.isCurrent)).toEqual([false, true])
+    expect(withFocus(s, 'C:/dev/gone', true)).toBe(s)
+    expect(withFocus(s, null, true)).toBe(s)
   })
 })
 

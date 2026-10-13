@@ -87,6 +87,56 @@ describe('dashboard pane', () => {
     await ui.unmount()
   })
 
+  test("🖥️ session brings up another worktree's session on Windows", async ($, on) => {
+    mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
+    mock.env(on, { OS: 'Windows_NT' })
+    const here = { ...tree('repo-7-dark-mode', 'In progress'), isCurrent: true }
+    const other = tree('repo-8-search', 'In progress')
+    const snapshot: NfSnapshot = { version: 1, generatedAt: '2026-10-07T10:00:00Z', mainRoot: 'C:/dev/repo', current: here.path, worktrees: [here, other], board: null }
+    on('state.get', ($, e, next) => (e.plugin === 'nanoflow' && e.key === 'snapshot' ? { value: { version: 1, value: snapshot } } : next(e)))
+    const runs: string[][] = []
+    on('process.run', async (_$, e) => {
+      runs.push([...e.argv])
+      return { value: { exitCode: 0, stdout: 'tab #7 · feat/repo-8-search\r\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    })
+    const toasts: string[] = []
+    on('ui.toast', async (_$, e) => {
+      toasts.push(e.text)
+      return { value: undefined }
+    })
+    const ui = await $.ui.mount({ plugin: 'nanoflow', surface: 'terminal', ...PANE })
+    // Not on the session's own card.
+    expect(await ui.find({ key: `session-${here.path}` })).toBeUndefined()
+    await ui.press({ key: `session-${other.path}` })
+    const script = runs.find(argv => argv.some(a => a.endsWith('open-session.ps1')))
+    expect(script).toContain('feat/repo-8-search')
+    expect(script).toContain('C:/dev/repo-8-search')
+    expect(toasts).toContain("🖥️ Switched to repo-8-search's session")
+    await ui.unmount()
+  })
+
+  test('THIS SESSION moves to the worktree a session started in the main checkout works in', async ($, on) => {
+    mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
+    mock.env(on, { OS: 'Windows_NT' })
+    const porcelain = 'worktree C:/dev/repo\nHEAD 1\nbranch refs/heads/main\n\nworktree C:/dev/repo-712-x\nHEAD 2\nbranch refs/heads/feat/712-x\n'
+    on('process.run', async (_$, e) => {
+      const listed = e.argv.includes('worktree')
+      return { value: { exitCode: listed ? 0 : 1, stdout: listed ? porcelain : '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    })
+    on('tool.call', () => ({ result: 'ok' }))
+    on('ui.status', async () => ({ value: undefined }))
+    const ui = await $.ui.mount({ plugin: 'nanoflow', surface: 'terminal', ...PANE })
+    // The test's session has no cwd of its own: no card is THIS SESSION until a tool names a worktree.
+    await $.command.run({ command: 'nanoflow', args: 'refresh' })
+    expect(await ui.find({ type: 'Text', text: /THIS SESSION/ })).toBeUndefined()
+    await $.tool.call({ tool: 'Read', file_path: 'C:\\dev\\repo-712-x\\src\\a.ts' })
+    expect(await ui.find({ type: 'Text', text: /THIS SESSION/ })).toBeDefined()
+    // Its card leads the list, and its ▸ button carries no 🖥️ session button beside it.
+    expect(await ui.find({ key: 'session-C:/dev/repo-712-x' })).toBeUndefined()
+    expect(await ui.find({ key: 'session-C:/dev/repo' })).toBeDefined()
+    await ui.unmount()
+  })
+
   test('/nanoflow says why when the app does not show the pane', async ($, on) => {
     on('ui.open', { id: 'nanoflow' }, () => ({ value: { isPlaced: false, reason: 'no attached surface places panes' } }))
     const { text } = await $.command.run({ command: 'nanoflow', args: '' })

@@ -8,8 +8,8 @@ import { diffSnapshots, mergeLocal, ticketLabel, type NfEvent } from './diff'
 import { statusLine } from './progress'
 import { browserEventOf, causeOf, CHECK_KINDS, matchRule, outputDetail, shortCommand, toastFor } from './rules'
 import {
-  applyFlowResult, baseName, buildFlowQuery, isInside, isSnapshot, normalizePath, parseJson, parseWorktreeList, quoteForCmd, samePath, serviceUrl,
-  featureOf, slugFromRemote, ticketKeyOf, ticketNumber, ticketUrl, type GitWorktree, type GqlRepo,
+  applyFlowResult, baseName, buildFlowQuery, focusFrom, isInside, isSnapshot, normalizePath, parseJson, parseWorktreeList, quoteForCmd, samePath, serviceUrl,
+  featureOf, slugFromRemote, ticketKeyOf, ticketNumber, ticketUrl, withFocus, type GitWorktree, type GqlRepo,
 } from './scan'
 import { PaneView, type PaneHandlers } from './view'
 
@@ -30,6 +30,7 @@ const selectedAtom = atom({ plugin: 'nanoflow', key: 'selected' } as const, null
 const expandedAtom = atom({ plugin: 'nanoflow', key: 'expanded' } as const, null)
 const busyAtom = atom({ plugin: 'nanoflow', key: 'busy' } as const, null)
 const sourceAtom = atom({ plugin: 'nanoflow', key: 'source' } as const, { config: 'defaults', provider: null, error: null })
+const focusAtom = atom({ plugin: 'nanoflow', key: 'focus' } as const, null)
 
 /** Module state: what the hooks share. Reset by a reload; the drawn data lives in $.state. */
 const S = {
@@ -270,7 +271,7 @@ const snapshotFor = async ($: $, full: boolean): Promise<NfSnapshot> => {
 const scan = async ($: $, full: boolean): Promise<void> => {
   const prev = await read($, snapshotAtom)
   const fresh = await snapshotFor($, full)
-  const next = full ? fresh : mergeLocal(prev, fresh)
+  const next = withFocus(full ? fresh : mergeLocal(prev, fresh), await read($, focusAtom), await isWindows($))
   const events = diffSnapshots(prev, next, await read($, browserAtom))
   await update($, snapshotAtom, () => next)
   for (const event of events) await emit($, event)
@@ -297,6 +298,20 @@ const refresh = ($: $, full: boolean): Promise<void> => {
     }
   })()
   return S.scanning
+}
+
+/** Tool input that names another worktree moves THIS SESSION there (see focusFrom). */
+const follow = async ($: $, input: Readonly<Record<string, unknown>>): Promise<void> => {
+  const snapshot = await read($, snapshotAtom)
+  if (!snapshot) return
+  const text = ['file_path', 'notebook_path', 'path', 'command'].map(k => input[k]).filter(v => typeof v === 'string').join('\n')
+  if (!text) return
+  const win = await isWindows($)
+  const focus = focusFrom(snapshot.worktrees, S.cwd, text, win)
+  if (!focus || (await read($, focusAtom)) === focus) return
+  await update($, focusAtom, () => focus)
+  await update($, snapshotAtom, s => (s ? withFocus(s, focus, win) : s))
+  await refreshStatus($)
 }
 
 // ─── actions ─────────────────────────────────────────────────────────────────────────────────────
@@ -355,6 +370,33 @@ const copy = async ($: $, text: string, copied: string, failed: string): Promise
   $.ui.toast(result.isCopied ? copied : failed)
 }
 
+/**
+ * Bring up the worktree's Claude session: its Windows Terminal tab when one is open, else resume its last
+ * session (or start one) in a new tab. Elsewhere, the command to start one goes to the clipboard.
+ */
+const openSession = async ($: $, wt: NfWorktree): Promise<void> => {
+  const start = `cd "${wt.path}" && claude`
+  if (!(await isWindows($))) return copy($, start, `📋 Copied: ${start}`, `Start it with: ${start}`)
+  const snapshot = await read($, snapshotAtom)
+  const argv = [
+    'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', `${$.plugin.root}/hooks/open-session.ps1`,
+    '-Path', wt.path, '-MainRoot', snapshot?.mainRoot ?? wt.path, '-Title', wt.ticket ? `${ticketLabel(wt.ticket)} · ${wt.name}` : wt.name,
+    // The main checkout's branch is in too many tab titles to find its tab by.
+    ...(wt.branch && !wt.isMain ? ['-Branch', wt.branch] : []),
+  ]
+  const { exitCode, stdout, stderr } = await runCommand($, argv, { timeoutMs: PROVIDER_TIMEOUT_MS }).catch(error => ({ exitCode: -1, stdout: '', stderr: String(error) }))
+  const [outcome = '', id = ''] = stdout.trim().split(/\s+/)
+  if (exitCode === 2) return copy($, start, `No Windows Terminal: 📋 copied ${start}`, `Start it with: ${start}`)
+  if (exitCode !== 0) return void (await emit($, { icon: '❌', text: `Open session ${wt.name} failed`, tone: 'error', important: true, detail: outputDetail(stdout, stderr) }))
+  const said: Record<string, string> = {
+    tab: `🖥️ Switched to ${wt.name}'s session`,
+    running: `🖥️ ${wt.name}'s session (${id.slice(0, 8)}) is open in another app`,
+    resumed: `🖥️ Resumed ${wt.name}'s session in a new tab`,
+    new: `🖥️ Started a session in ${wt.name}`,
+  }
+  $.ui.toast(said[outcome] ?? `🖥️ ${stdout.trim()}`)
+}
+
 const handlers = ($: $): PaneHandlers => ({
   setTab: (tab: NfTab) => void update($, tabAtom, () => tab),
   refresh: () => void refresh($, true),
@@ -366,6 +408,7 @@ const handlers = ($: $): PaneHandlers => ({
   stopDev: wt => void runAction($, ACTION.stopDev, { wt }),
   teardown: wt => void runAction($, ACTION.teardown, { wt }),
   copyPath: wt => void copy($, wt.path, `📋 Copied ${wt.path}`, `Path: ${wt.path}`),
+  openSession: wt => void openSession($, wt),
   startTask: ticket => void runAction($, ACTION.startTask, { ticket }),
   goTo: ticket => {
     void (async () => {
@@ -518,7 +561,9 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   on('tool.call', async ($, e, next) => {
-    const browser = browserEventOf(String(e.tool), e as unknown as Record<string, unknown>)
+    const input = e as unknown as Record<string, unknown>
+    await follow($, input)
+    const browser = browserEventOf(String(e.tool), input)
     if (!browser) return next(e)
     const ran = await next(e)
     if (ran.deny !== undefined || ran.isError === true) return ran

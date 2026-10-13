@@ -43,7 +43,11 @@ It works in the Claude desktop app too:
 
 <p align="center"><img src="docs/media/claude-desktop.png" alt="The nanoflow pane docked beside a chat in the Claude desktop app, listing the demo shop's five worktrees with their tickets, PRs, CI and ports" width="100%"></p>
 
-- **Your session's worktree is framed and badged**, so you always know where *this* agent is.
+- **Your session's worktree is framed and badged**, so you always know where *this* agent is, even when the
+  session started in the main checkout and works in a worktree from there.
+- **🖥️ session on any other worktree** brings up its Claude session: in Windows Terminal it switches to the
+  tab already titled with its branch, else resumes its last session (or starts one) in a new tab. Elsewhere it
+  copies the command that starts one.
 - **Everything is a link**: the ticket, the PR, the failing CI run, each running service, the worktree folder.
 - **Select a worktree for actions**: ▶ Pick up its ticket (Claude moves it to In progress and plans the
   work; offered until it's under way), 🚀 Start dev, ■ Stop, 🌐 Open app, 🔀 Open PR, 📋 Copy path, and 🧹 Teardown (offered once its PR is merged or its ticket is closed, and it asks first).
