@@ -69,6 +69,8 @@ declare module 'claude-code' {
       expanded: number | null
       busy: string | null
       source: NfSource
+      /** The worktree this session works in, from the paths its tool calls name; null until one does. */
+      focus: string | null
     }
   }
 }

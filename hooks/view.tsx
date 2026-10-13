@@ -38,6 +38,7 @@ export type PaneHandlers = {
   stopDev: (wt: NfWorktree) => void
   teardown: (wt: NfWorktree) => void
   copyPath: (wt: NfWorktree) => void
+  openSession: (wt: NfWorktree) => void
   startTask: (ticket: NfTicket) => void
   goTo: (ticket: NfTicket) => void
   newTicket: (title: string) => void
@@ -133,6 +134,7 @@ const WorktreeCard = (el: PaneElements, data: PaneData, on: PaneHandlers, wt: Nf
       {Row(el, k('head'), [
         wt.isCurrent && Badge(el, k('here'), '📍 THIS SESSION', COLOR.current),
         <Button key={k('select')} plain label={`${isSelected ? '▾' : '▸'} ${icon} ${wt.name}`} onPress={() => on.select(isSelected ? null : wt.path)} />,
+        !wt.isCurrent && <Button key={k('session')} plain label="🖥️ session" onPress={() => on.openSession(wt)} />,
         wt.ticket && TicketLink(el, k('ticket'), wt.ticket),
         title && <Text key={k('title')} bold color={wt.isCurrent ? COLOR.current : undefined}>{title}</Text>,
         wt.ticket?.status && StatusBadge(el, k('status'), wt.ticket.status),
