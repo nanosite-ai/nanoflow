@@ -44,7 +44,7 @@ rename, allow or undo in /secrets*. That covers:
 - a bare random value right after a cue word: *"the staging db password is x7Gq…"*, *"use this token …"*,
   *"api key: …"*. The cue words are password, passphrase, passcode, pass, pw, pwd, token, secret, key, api
   key and credential, with up to four plain words in between. The value must look random (12+ characters,
-  letters and digits); a git SHA, a UUID, a URL, a path or an ordinary word is left as typed.
+  letters and digits); a git SHA, a UUID, a URL, a path, an ordinary word or a code identifier (`refreshOAuth2Token`) is left as typed. A rare random value that reads like an identifier is missed: paste such a secret with its name (`ADMIN_PASSWORD=…`) or add it in /secrets.
 
 A value already in the vault is replaced by its own name. Like any stored secret, a pasted one is allowed
 nowhere until you allow it. Text you paste is part of the prompt, so it is covered the same way; pasted

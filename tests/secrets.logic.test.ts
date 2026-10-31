@@ -6,7 +6,7 @@ import {
   nextPastedName, parseAllow, parseEnv, parseVaultStore, placeholderNames, policiesOf, quoteFor, redact, redactContent, sectionText,
   substitute, widenedBy, withoutConfigFiles, writesMarkAsValue,
 } from '../hooks/secrets/redact'
-import { fake, FAKES, KIND, randomFake } from './fakes'
+import { fake, FAKES, KIND, randomFake, bareFake } from './fakes'
 
 const P = (name: string) => `{{secret:${name}}}`
 
@@ -503,8 +503,18 @@ describe('secrets: what the person types (#42)', () => {
     }
   }
 
+  test('a code identifier after a cue word is a name, not a secret: it stays in the prompt', () => {
+    for (const text of [
+      'fix the token refresh in refreshOAuth2Token',
+      'the key handler is handleKeyDown2Event',
+      'rename the secret helper to getSecretV2Value',
+      'password reset uses resetPassword2FA',
+      'the key is useAuth2Token hook',
+    ]) expect(redact(text, {}, { person: true, onUnknown: () => 'PASTED_1' }).text).toBe(text)
+  })
+
   test('a bare random value after a cue word is vaulted from a prompt, and left alone in tool output', () => {
-    const v = randomFake(20)
+    const v = bareFake(20)
     for (const text of [
       `the db password is ${v}`,
       `use this token ${v} for staging`,

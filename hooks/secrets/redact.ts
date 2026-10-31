@@ -374,8 +374,20 @@ const CUE_RE =
 const GIT_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-/** A bare value that reads as a secret: `looksSecret`, and not a git SHA or a UUID (ids people quote). */
-export const looksBareSecret = (value: string): boolean => looksSecret(value) && !GIT_SHA_RE.test(value) && !UUID_RE.test(value)
+/**
+ * A code identifier (`refreshOAuth2Token`, `useAuth2Token`, `getSecretV2Value`): most of its letters sit in
+ * camelCase words of 3+ letters with a vowel. A random token's letters fall in short, vowel-poor chunks.
+ */
+export const looksLikeIdentifier = (value: string): boolean => {
+  const words = value.match(/[A-Z]?[a-z]+|[A-Z]+(?![a-z])/g) ?? []
+  const letters = words.reduce((n, w) => n + w.length, 0)
+  const wordy = words.filter(w => w.length >= 3 && /[aeiouy]/i.test(w)).reduce((n, w) => n + w.length, 0)
+  return letters > 0 && wordy / letters >= 0.7
+}
+
+/** A bare value that reads as a secret: `looksSecret`, and not a git SHA, a UUID or a code identifier. */
+export const looksBareSecret = (value: string): boolean =>
+  looksSecret(value) && !GIT_SHA_RE.test(value) && !UUID_RE.test(value) && !looksLikeIdentifier(value)
 
 /**
  * Masks every secret in `text`: vault values (and their transforms) become their placeholder; known formats

@@ -2,7 +2,7 @@
 // vaulting a pasted token, the system section, and the /secrets pane. Every value is a fake built at run time.
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { fake, FAKES, randomFake } from './fakes'
+import { fake, FAKES, randomFake, bareFake } from './fakes'
 
 const VAULT_KEY = 'secrets.vault'
 const P = (name: string) => `{{secret:${name}}}`
@@ -448,7 +448,7 @@ describe('secrets: a token typed into a prompt', () => {
   test('a token, a context secret and a bare value after a cue word are vaulted as PASTED_<n>; /secrets undo removes them', async ($, on) => {
     const known = randomFake(24)
     const db = randomFake(20)
-    const bare = randomFake(18)
+    const bare = bareFake(18)
     const store = memStore(on, { [VAULT_KEY]: vaultOf({ API_TOKEN: { value: known }, PASTED_1: { value: randomFake(20) } }) })
     const toasts = captureToasts(on)
     let entered = ''
@@ -470,7 +470,7 @@ describe('secrets: a token typed into a prompt', () => {
 
   test('a bare value in a tool result is not the person’s: it reaches the model as before, and nothing is stored', async ($, on) => {
     const store = memStore(on, {})
-    const bare = randomFake(18)
+    const bare = bareFake(18)
     const masked = await $.session.append({ message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: `the admin password is ${bare}` }] } } as never)
     expect(JSON.stringify(masked)).not.toContain('PASTED_')
     expect(store.raw[VAULT_KEY]).toBeUndefined()
