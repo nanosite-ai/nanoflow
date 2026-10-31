@@ -37,6 +37,8 @@ export type PaneHandlers = {
   startDev: (wt: NfWorktree) => void
   stopDev: (wt: NfWorktree) => void
   teardown: (wt: NfWorktree) => void
+  /** Tears down every worktree that is done, after one question. */
+  teardownDone: (trees: readonly NfWorktree[]) => void
   copyPath: (wt: NfWorktree) => void
   openSession: (wt: NfWorktree) => void
   startTask: (ticket: NfTicket) => void
@@ -80,9 +82,14 @@ export const isPickable = (wt: NfWorktree): boolean => {
   return !['progress', 'review', 'done'].some(word => s.includes(word))
 }
 
-/** A worktree's work is over: its PR merged or closed, or its ticket closed. Offered for teardown. */
+/**
+ * A worktree's work is over: its PR merged or closed, its ticket closed, or the ticket Done on the board (what
+ * `nf task done` sets) with no PR still open. Offered for teardown.
+ */
 export const isDone = (wt: NfWorktree): boolean =>
-  !wt.isMain && (wt.pr?.state === 'MERGED' || wt.pr?.state === 'CLOSED' || wt.ticket?.state === 'CLOSED')
+  !wt.isMain &&
+  (wt.pr?.state === 'MERGED' || wt.pr?.state === 'CLOSED' || wt.ticket?.state === 'CLOSED' ||
+    (/\bdone\b/i.test(wt.ticket?.status ?? '') && wt.pr?.state !== 'OPEN'))
 
 const ago = (now: number, iso: string): string => {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000))
@@ -138,6 +145,8 @@ const WorktreeCard = (el: PaneElements, data: PaneData, on: PaneHandlers, wt: Nf
         wt.ticket && TicketLink(el, k('ticket'), wt.ticket),
         title && <Text key={k('title')} bold color={wt.isCurrent ? COLOR.current : undefined}>{title}</Text>,
         wt.ticket?.status && StatusBadge(el, k('status'), wt.ticket.status),
+        // Done: offered right on the title, without opening the card (its actions row has it too).
+        data.can.teardown && done && !isSelected && <Button key={k('teardown-head')} plain label="🧹 Teardown" onPress={() => on.teardown(wt)} />,
       ])}
       {Row(el, k('meta'), [
         <Text key={k('branch')} color={COLOR.info}>{`⎇ ${wt.branch ?? '(detached)'}`}</Text>,
@@ -169,26 +178,28 @@ const WorktreeCard = (el: PaneElements, data: PaneData, on: PaneHandlers, wt: Nf
         wt.ticket && <Link key={k('open-ticket')} href={wt.ticket.url} label="🎫 Open ticket ↗" />,
         <Button key={k('copy')} label="📋 Copy path" onPress={() => on.copyPath(wt)} />,
         data.can.teardown && done && <Button key={k('teardown')} label="🧹 Teardown" onPress={() => on.teardown(wt)} />,
-        data.can.teardown && !wt.isMain && !done && <Text key={k('teardown-later')} dimColor>🧹 teardown once the PR is merged or the ticket closed</Text>,
+        data.can.teardown && !wt.isMain && !done && <Text key={k('teardown-later')} dimColor>🧹 teardown once the PR is merged or the ticket closed or Done</Text>,
       ], { indent: true })}
     </Box>
   )
 }
 
 /** One line of counts above the cards. */
-const Fleet = (el: PaneElements, snapshot: NfSnapshot) => {
-  const { Text } = el
+const Fleet = (el: PaneElements, data: PaneData, on: PaneHandlers, snapshot: NfSnapshot) => {
+  const { Text, Button } = el
   const trees = snapshot.worktrees
   const running = trees.filter(w => w.services.some(s => s.isUp)).length
   const prs = trees.filter(w => w.pr?.state === 'OPEN').length
   const red = trees.filter(w => w.pr?.state === 'OPEN' && w.pr.ci === 'fail').length
-  const done = trees.filter(isDone).length
+  const done = trees.filter(isDone)
   return Row(el, 'fleet', [
     <Text key="fleet-trees" bold>{`🌳 ${trees.length} worktrees`}</Text>,
     <Text key="fleet-running" color={running ? COLOR.ok : COLOR.muted}>{`🚀 ${running} running`}</Text>,
     <Text key="fleet-prs" color={prs ? COLOR.info : COLOR.muted}>{`🔀 ${prs} open PRs`}</Text>,
     red > 0 && <Text key="fleet-red" color={COLOR.bad} bold>{`❌ ${red} red CI`}</Text>,
-    done > 0 && <Text key="fleet-done" color={COLOR.merged}>{`🧹 ${done} ready to tear down`}</Text>,
+    done.length > 0 && (data.can.teardown
+      ? <Button key="fleet-teardown" plain label={`🧹 Tear down ${done.length} done`} onPress={() => on.teardownDone(done)} />
+      : <Text key="fleet-done" color={COLOR.merged}>{`🧹 ${done.length} ready to tear down`}</Text>),
   ], { gap: 2 })
 }
 
@@ -200,7 +211,7 @@ const WorktreesTab = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
   const trees = [...data.snapshot.worktrees].sort((a, b) => rank(a) - rank(b))
   return (
     <Box key="worktrees" flexDirection="column" gap={1}>
-      {Fleet(el, data.snapshot)}
+      {Fleet(el, data, on, data.snapshot)}
       <Box key="cards" flexDirection="column">
         {trees.map(wt => WorktreeCard(el, data, on, wt))}
       </Box>

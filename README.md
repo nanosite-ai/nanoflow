@@ -50,7 +50,7 @@ It works in the Claude desktop app too:
   copies the command that starts one.
 - **Everything is a link**: the ticket, the PR, the failing CI run, each running service, the worktree folder.
 - **Select a worktree for actions**: ▶ Pick up its ticket (Claude moves it to In progress and plans the
-  work; offered until it's under way), 🚀 Start dev, ■ Stop, 🌐 Open app, 🔀 Open PR, 📋 Copy path, and 🧹 Teardown (offered once its PR is merged or its ticket is closed, and it asks first).
+  work; offered until it's under way), 🚀 Start dev, ■ Stop, 🌐 Open app, 🔀 Open PR, 📋 Copy path, and 🧹 Teardown (offered once its PR is merged, or its ticket is closed or Done on the board with no PR open; it asks first). A done card shows 🧹 Teardown on its title too, and the summary line's **🧹 Tear down N done** tears them all down after one question.
 - **Tickets tab**: your board's Ready / In progress / In review columns. ▶ Start a ticket (the agent runs
   the kickoff), jump to the worktree already on it, or create a new one.
 - **Activity tab**: the last 50 moments, linked.

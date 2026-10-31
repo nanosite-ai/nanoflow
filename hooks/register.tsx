@@ -318,7 +318,7 @@ const follow = async ($: $, input: Readonly<Record<string, unknown>>): Promise<v
 
 // ─── actions ─────────────────────────────────────────────────────────────────────────────────────
 
-const runAction = async ($: $, key: NfActionKey, ctx: { wt?: NfWorktree; ticket?: NfTicket; title?: string }): Promise<void> => {
+const runAction = async ($: $, key: NfActionKey, ctx: { wt?: NfWorktree; ticket?: NfTicket; title?: string; confirmed?: boolean }): Promise<void> => {
   const action = S.config.actions[key]
   if (!action) return
   const snapshot = await read($, snapshotAtom)
@@ -337,7 +337,7 @@ const runAction = async ($: $, key: NfActionKey, ctx: { wt?: NfWorktree; ticket?
   }
   const label = action.label ?? key
   const subject = wt?.name ?? vars.ref ?? ''
-  if (action.confirm) {
+  if (action.confirm && !ctx.confirmed) {
     const answer = await $.ui.ask(`${label} ${subject}?`, ['Yes', 'No']).catch(() => 'No')
     if (answer !== 'Yes') return
   }
@@ -364,6 +364,18 @@ const runAction = async ($: $, key: NfActionKey, ctx: { wt?: NfWorktree; ticket?
     await update($, busyAtom, () => null)
     void refresh($, true)
   }
+}
+
+/** Tears down each done worktree with the repo's teardown action, one after another, after one question. */
+const teardownAll = async ($: $, trees: readonly NfWorktree[]): Promise<void> => {
+  const action = S.config.actions[ACTION.teardown]
+  if (!action || trees.length === 0) return
+  const names = trees.map(wt => wt.name).join(', ')
+  if (action.confirm) {
+    const answer = await $.ui.ask(`${action.label ?? 'Teardown'} ${trees.length} done: ${names}?`, ['Yes', 'No']).catch(() => 'No')
+    if (answer !== 'Yes') return
+  }
+  for (const wt of trees) await runAction($, ACTION.teardown, { wt, confirmed: true })
 }
 
 /** Copy to the clipboard and say how it went. */
@@ -409,6 +421,7 @@ const handlers = ($: $): PaneHandlers => ({
   startDev: wt => void runAction($, ACTION.startDev, { wt }),
   stopDev: wt => void runAction($, ACTION.stopDev, { wt }),
   teardown: wt => void runAction($, ACTION.teardown, { wt }),
+  teardownDone: trees => void teardownAll($, trees),
   copyPath: wt => void copy($, wt.path, `📋 Copied ${wt.path}`, `Path: ${wt.path}`),
   openSession: wt => void openSession($, wt),
   startTask: ticket => void runAction($, ACTION.startTask, { ticket }),
