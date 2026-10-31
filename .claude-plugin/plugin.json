@@ -28,6 +28,12 @@
         "off"
       ]
     },
+    "secretsAllowTrackedWrites": {
+      "type": "boolean",
+      "title": "Secrets: allow writing into tracked files",
+      "description": "Let every secret be written into files git tracks. Off by default: a secret is written only into git-ignored files, unless you allow it for that secret in /secrets.",
+      "default": false
+    },
     "openPaneOnStart": {
       "type": "boolean",
       "title": "Open the dashboard on start",

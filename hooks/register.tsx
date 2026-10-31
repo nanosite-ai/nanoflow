@@ -435,9 +435,6 @@ export const register: Register = (on, options) => {
   S.toastLevel = typeof options.toasts === 'string' ? options.toasts : 'all'
   const openPaneOnStart = options.openPaneOnStart !== false
 
-  // Secrets: the vault, the /secrets pane, and the hooks that keep every value out of the model's sight.
-  registerSecrets(on)
-
   // ─── session ─────────────────────────────────────────────────────────────────────────────────────
 
   on('session.start', async ($, e, next) => {
@@ -625,4 +622,10 @@ export const register: Register = (on, options) => {
       version: S.version,
     }, handlers($))
   })
+
+  // ─── secrets ─────────────────────────────────────────────────────────────────────────────────────
+
+  // Registered LAST: hooks nest first-outermost, so the secrets tool.call hook is the innermost of nanoflow's
+  // and every hook above (the activity feed, toasts, the rules) sees the placeholder, never the value.
+  registerSecrets(on, { allowTrackedWrites: options.secretsAllowTrackedWrites === true })
 }

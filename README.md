@@ -71,14 +71,16 @@ screenshots too."*
 
 ### 🔐 Secrets Claude uses without seeing
 
-Type `/secrets` to open the Secrets pane. Add a secret (a name, then its value), import a `.env` file, and
-copy, reveal (for 10 seconds), rename or delete one. Claude sees only the names. It writes
-`{{secret:STRIPE_SECRET_KEY}}` in a Bash or PowerShell command or in a file it writes, and the value is
-filled in as the tool runs. Any value that comes back in output, from any tool or subagent, reaches Claude
-as the placeholder again. Known token formats (private keys, JWTs, GitHub, npm, Stripe, Slack, AWS,
-Google) and `PASSWORD=…`-style lines are masked even when they aren't in the vault. A secret you paste
-into a prompt is stored as `PASTED_1` before Claude reads it, and you can rename it in `/secrets`.
-How it works and what it can't catch: [docs/secrets.md](docs/secrets.md).
+Type `/secrets` to open the Secrets pane. There you can add a secret for this project or for all projects,
+import a `.env` file, and copy, reveal (for 10 seconds), rename or delete one. Claude sees only the names.
+It writes `{{secret:STRIPE_SECRET_KEY}}` in a Bash or PowerShell command, and the value is filled in, quoted for
+the shell, **only for the commands and hosts you allowed for that secret**. A new secret is allowed
+nowhere. Values go only into git-ignored files, unless you allow tracked files for that secret. A value
+that comes back in output, from any tool or subagent, reaches Claude as the placeholder again. Common
+token formats are masked even when they're not in the vault, and a token you paste into a prompt is
+stored as `PASTED_1` first.
+This guards against accidental exposure, not against a deliberately hostile agent. What it covers and what
+it doesn't: [docs/secrets.md](docs/secrets.md).
 
 ### Dev skills
 
