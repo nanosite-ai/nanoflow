@@ -20,7 +20,8 @@ It pairs with the **nanoflow Claude Code plugin**, a live dashboard of every wor
 run, with toasts and a progress status line:
 
 ```
-/plugin install nanoflow --marketplace nanosite-ai/nanoflow
+/plugin marketplace add nanosite-ai/claude-plugins
+/plugin install nanoflow@nanosite
 ```
 
 Docs, configuration and the full command reference: **https://github.com/nanosite-ai/nanoflow**
