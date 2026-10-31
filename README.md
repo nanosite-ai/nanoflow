@@ -74,8 +74,9 @@ screenshots too."*
 Type `/secrets` to open the Secrets pane. There you can add a secret for this project or for all projects,
 import a `.env` file, and copy, reveal (for 10 seconds), rename or delete one. Claude sees only the names.
 It writes `{{secret:STRIPE_SECRET_KEY}}` in a Bash or PowerShell command, and the value is filled in, quoted for
-the shell, **only for the commands and hosts you allowed for that secret**. A new secret is allowed
-nowhere. Values go only into git-ignored files, unless you allow tracked files for that secret. A value
+the shell, **only in one simple command, for the commands and hosts you allowed for that secret**. A new
+secret is allowed nowhere, and only you change that, in the pane. Values go into files only when you allow
+it for that secret (git-ignored files; tracked ones need a second switch). A value
 that comes back in output, from any tool or subagent, reaches Claude as the placeholder again. Common
 token formats are masked even when they're not in the vault, and a token you paste into a prompt is
 stored as `PASTED_1` first.

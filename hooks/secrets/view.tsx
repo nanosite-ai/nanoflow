@@ -40,6 +40,11 @@ export type SecretsHandlers = {
   importEnv: (path: string) => void
   undoPasted: () => void
   toggleTracked: (id: string) => void
+  toggleFiles: (id: string) => void
+  /** Puts in force a wider policy the store got outside this pane. */
+  acceptChange: (id: string) => void
+  /** Writes the policy in force back over one the store got outside this pane. */
+  revertChange: (id: string) => void
 }
 
 const TONE = { error: COLOR.bad, success: COLOR.ok, warning: COLOR.wait, info: undefined } as const
@@ -69,7 +74,19 @@ const SecretRow = (el: PaneElements, s: NfSecret, data: SecretsData, on: Secrets
             <Text key="label" dimColor>Allowed:</Text>,
             ...s.allow.map(item => <Button key={`secret-unallow-${s.id}-${item}`} plain label={`${item} ✕`} onPress={() => on.unallow(s.id, item)} />),
           ], { indent: true })}
-      {data.trackedForAll
+      {s.changed.length > 0 &&
+        Row(el, k('changed-row'), [
+          <Text key="changed" color={COLOR.bad}>{`⚠ Changed outside this pane, not in force: ${s.changed.join(', ')}`}</Text>,
+          <Button key={k('accept')} plain label="[ accept ]" onPress={() => on.acceptChange(s.id)} />,
+          <Button key={k('revert')} plain label="[ undo ]" onPress={() => on.revertChange(s.id)} />,
+        ], { indent: true })}
+      {Row(el, k('files-row'), [
+        <Text key="label" color={s.allowFiles ? COLOR.wait : undefined} dimColor={!s.allowFiles}>
+          {s.allowFiles ? '📄 May be written into git-ignored files' : '📄 Never written into files'}
+        </Text>,
+        <Button key={k('files')} plain label={s.allowFiles ? '[ disallow ]' : '[ allow writing into files ]'} onPress={() => on.toggleFiles(s.id)} />,
+      ], { indent: true })}
+      {!s.allowFiles ? null : data.trackedForAll
         ? <Text key={k('tracked-all')} dimColor>{'  📝 Tracked files: allowed for every secret (the secretsAllowTrackedWrites setting)'}</Text>
         : Row(el, k('tracked-row'), [
             <Text key="label" color={s.allowTracked ? COLOR.wait : undefined} dimColor={!s.allowTracked}>

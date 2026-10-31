@@ -9,10 +9,11 @@
 // ─── the vault ───────────────────────────────────────────────────────────────────────────────────
 
 /**
- * One secret: its value, the commands and hosts it may be used with (nothing until the user allows), and
- * whether the user lets it be written into a file git tracks (off by default). Only the pane sets these.
+ * One secret: its value, the commands and hosts it may be used with (nothing until the user allows), whether
+ * it may be written into files at all (git-ignored ones), and into files git tracks too (both off by
+ * default). Only the pane sets these, and a change made anywhere else is not trusted (see `narrowPolicy`).
  */
-export type Entry = { value: string; allow: string[]; allowTracked?: true }
+export type Entry = { value: string; allow: string[]; allowTracked?: true; allowFiles?: true }
 export type Scope = 'project' | 'global'
 /** What `$.store` holds under VAULT_KEY: secrets for every project (by root folder) and for all projects. */
 export type VaultStore = { global: Record<string, Entry>; projects: Record<string, Record<string, Entry>> }
@@ -46,6 +47,7 @@ const entriesOf = (raw: unknown): Record<string, Entry> => {
         value: v.value,
         allow: Array.isArray(v.allow) ? v.allow.filter((a): a is string => typeof a === 'string') : [],
         ...(v.allowTracked === true ? { allowTracked: true as const } : {}),
+        ...(v.allowFiles === true ? { allowFiles: true as const } : {}),
       }
     }
   }
@@ -78,6 +80,49 @@ export const allValues = (store: VaultStore, root: string | null): Array<[string
   if (root) for (const [n, e] of Object.entries(store.projects[root] ?? {})) pairs.push([n, e.value])
   // A value held twice keeps the last name: the session's own project's.
   return [...new Map(pairs.map(([n, v]) => [v, n])).entries()].map(([v, n]) => [n, v])
+}
+
+// ─── policy: what the user allowed, and what the store says ──────────────────────────────────────
+
+/** What a secret may be used for: its Allow list, files, tracked files. */
+export type Policy = { allow: string[]; allowTracked: boolean; allowFiles: boolean }
+
+export const NO_POLICY: Policy = { allow: [], allowTracked: false, allowFiles: false }
+
+export const policyOf = (e: Entry): Policy => ({ allow: [...e.allow], allowTracked: e.allowTracked === true, allowFiles: e.allowFiles === true })
+
+/** The key a secret's trusted policy is kept under: its scope, project and name. */
+export const trustKey = (scope: Scope, root: string | null, name: string): string => (scope === 'global' || !root ? `g:${name}` : `p:${root}:${name}`)
+
+/** The trust key of the entry `name` resolves to in a session in `root` (the project's own wins). */
+export const trustKeyIn = (store: VaultStore, root: string | null, name: string): string =>
+  trustKey(root && store.projects[root]?.[name] ? 'project' : 'global', root, name)
+
+/** Every entry's policy by trust key: what a session trusts when it first reads the store. */
+export const policiesOf = (store: VaultStore): Record<string, Policy> => {
+  const out: Record<string, Policy> = {}
+  for (const [name, e] of Object.entries(store.global)) out[trustKey('global', null, name)] = policyOf(e)
+  for (const [root, entries] of Object.entries(store.projects)) for (const [name, e] of Object.entries(entries)) out[trustKey('project', root, name)] = policyOf(e)
+  return out
+}
+
+/**
+ * The policy in force: the store's, but no wider than what the user set in the pane (`trusted`, kept by the
+ * host for the session, which no tool call can write). The store is a plain file an agent could edit.
+ */
+export const narrowPolicy = (stored: Policy, trusted: Policy | undefined): Policy => {
+  const t = trusted ?? NO_POLICY
+  return { allow: stored.allow.filter(a => t.allow.includes(a)), allowTracked: stored.allowTracked && t.allowTracked, allowFiles: stored.allowFiles && t.allowFiles }
+}
+
+/** What the store allows beyond `trusted`: changes made outside the pane, for the pane to show. */
+export const widenedBy = (stored: Policy, trusted: Policy | undefined): string[] => {
+  const t = trusted ?? NO_POLICY
+  return [
+    ...stored.allow.filter(a => !t.allow.includes(a)),
+    ...(stored.allowFiles && !t.allowFiles ? ['files'] : []),
+    ...(stored.allowTracked && !t.allowTracked ? ['tracked files'] : []),
+  ]
 }
 
 // ─── names ───────────────────────────────────────────────────────────────────────────────────────
@@ -139,7 +184,11 @@ export const looksLikeValue = (raw: string): boolean => {
   const text = raw.trim()
   if (matchesPattern(text)) return true
   if (/[^A-Za-z0-9_\- ]/.test(text) && text.length >= 12) return true
-  return text.length >= 20 && /\d/.test(text) && /[A-Za-z]/.test(text) && entropy(text) >= 3.5
+  if (!/\d/.test(text) || !/[A-Za-z]/.test(text)) return false
+  if (text.length >= 20 && entropy(text) >= 3.5) return true
+  // A name has words between separators and one case; 16+ random characters without a separator are a value.
+  const mixedCase = /[a-z]/.test(text) && /[A-Z]/.test(text)
+  return text.length >= 16 && !/[_\- ]/.test(text) && entropy(text) >= (mixedCase ? 3.0 : 3.5)
 }
 
 /** A name for what the person typed, or why not (never echoing what they typed). */
@@ -161,9 +210,19 @@ const EXAMPLE_VALUE_RE =
   /^(?:\$|\{\{|«|<.*>$|\[.*\]$|\*+$|\.{3}|x{3,}|(?:your|my|some|insert|enter|replace)[-_]|.*(?:changeme|change_me|example|placeholder|dummy|sample|redacted|todo|fixme|secret_here|key_here))/i
 const WORDY_RE = /^[A-Za-z]+(?:[-_.](?:[A-Za-z]+|\d+|[A-Za-z]{1,2}\d{1,3}))+$/
 
-/** Whether an assignment's value is a real-looking secret: 12+ characters, random, letters and digits, no example. */
+/**
+ * Keys that name something about a secret, not the secret: `KEY_ID`, `apiKeyName`, `tokenUrl`, `keyPath`,
+ * `passwordField`, and keys that are lookup keys (`storageKey`, `cacheKey`).
+ */
+export const isNotSecretKey = (key: string): boolean =>
+  /[_-](?:id|name|field|path|url|uri|file|type|header|param|label|prefix|ttl)$/i.test(key) ||
+  /[a-z0-9](?:Id|ID|Name|Field|Path|Url|URL|Uri|File|Type|Header|Param|Label|Prefix|Ttl)$/.test(key) ||
+  /(?:storage|cache|sort|primary|foreign|partition|idempotency|query|i18n|translation|row|item|list|map|lookup|hot)[_-]?key$/i.test(key)
+
+/** Whether an assignment's value is a real-looking secret: 12+ characters, random, letters and digits, no example, no URL or path. */
 export const looksSecret = (value: string): boolean => {
   if (value.length < 12 || EXAMPLE_VALUE_RE.test(value) || WORDY_RE.test(value)) return false
+  if (value.includes('://') || /^(?:\.{0,2}\/|~\/|[A-Za-z]:[\\/])/.test(value)) return false
   if (!/[A-Za-z]/.test(value) || !/\d/.test(value)) return false
   if (/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+(?:\(\))?$/.test(value)) return false
   return entropy(value) >= 3.0
@@ -171,6 +230,14 @@ export const looksSecret = (value: string): boolean => {
 
 /** Files whose secrets are examples by name (`.env.example`, `config.sample.json`, `x.template`). */
 export const isExampleFile = (path: string): boolean => /\.(?:example|sample|template|dist)(?:\.[A-Za-z0-9]+)?$/i.test(path)
+
+/**
+ * Whether written text puts a mark where a value goes: after `=` or `:`, or opening a quoted string. That is
+ * a masked line being written back, which would replace the real value. Text that only mentions the mark
+ * (prose, a code comment) passes, and so does any Markdown or plain-text file.
+ */
+export const writesMarkAsValue = (text: string, path: string): boolean =>
+  !/\.(?:md|mdx|markdown|txt|rst)$/i.test(path) && new RegExp(`(?:[=:]\\s*["'\`]?|["'])${escapeRe(REDACTED_MARK)}`).test(text)
 
 // ─── forms a vault value travels in ──────────────────────────────────────────────────────────────
 
@@ -312,7 +379,7 @@ export const redact = (text: string, values: Values, options: RedactOptions = {}
   }
   if (!options.skipAssignments) {
     out = out.replace(ASSIGNMENT_RE, (whole, key: string, quote: string, value: string) => {
-      if (!looksSecret(value)) return whole
+      if (!looksSecret(value) || isNotSecretKey(key.replace(/["']?\s*[:=]\s*$/, ''))) return whole
       hits.push('value')
       return `${key}${quote}${redactedMark('value')}${quote}`
     })
@@ -345,8 +412,15 @@ export const quoteFor = (shell: Shell, inside: QuoteContext, value: string): str
 /**
  * Fills each placeholder in `text` with its value, quoted for `shell` at that spot (raw for file content);
  * an escaped one (a backslash in front) becomes the literal placeholder text. `missing` lists names with no value.
+ * A command that fills a value in must be one simple command (`commandWords`), where the quote at each spot is
+ * certain; otherwise nothing is filled in and `refused` says why (a comment, `$(…)`, a heredoc… could each
+ * change how the value is read).
  */
-export const substitute = (text: string, vault: Vault, shell: Shell = 'raw'): { text: string; missing: string[] } => {
+export const substitute = (text: string, vault: Vault, shell: Shell = 'raw'): { text: string; missing: string[]; refused?: string } => {
+  if (shell !== 'raw' && placeholderNames(text).length > 0) {
+    const parsed = commandWords(text, shell)
+    if ('error' in parsed) return { text, missing: [], refused: parsed.error }
+  }
   const missing = new Set<string>()
   const re = new RegExp(PLACEHOLDER_RE.source, 'g')
   const escapeChar = shell === 'powershell' ? '`' : '\\'
@@ -380,29 +454,151 @@ export const substitute = (text: string, vault: Vault, shell: Shell = 'raw'): { 
   return { text: out, missing: [...missing] }
 }
 
-// ─── where a command goes: its program and the hosts it names ────────────────────────────────────
+// ─── where a command goes: one simple command, its program and the hosts it names ────────────────
 
 const PROGRAM_PREFIXES = new Set(['sudo', 'env', 'command', 'exec', 'time', 'nohup', '&', '.'])
 
-/** The first program a command runs (after `VAR=value` assignments and wrappers), lowercased, no path or .exe. */
+const programName = (word: string): string => (word.split(/[\\/]/).pop() ?? word).toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '')
+
+/** The first program a command runs (after `VAR=value` assignments and wrappers), lowercased, no path or .exe. For a toast. */
 export const firstProgram = (command: string): string | null => {
   const words = command.trim().match(/"[^"]*"|'[^']*'|\S+/g) ?? []
   for (const raw of words) {
     const word = raw.replace(/^["']|["']$/g, '')
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word) || PROGRAM_PREFIXES.has(word)) continue
-    const base = word.split(/[\\/]/).pop() ?? word
-    return base.toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/, '') || null
+    return programName(word) || null
   }
   return null
 }
 
-/** Every host a command names: URL hosts, `user@host`, and IPv4 addresses. */
-export const hostsIn = (command: string): string[] => {
-  const hosts = new Set<string>()
-  for (const m of command.matchAll(/\b[a-z][a-z0-9+.-]{1,20}:\/\/(?:[^\s/@'"`]*@)?\[?([^\s/:'"`?#\]]+)/gi)) hosts.add(m[1]!.toLowerCase())
-  for (const m of command.matchAll(/(?<![\w./:-])[\w.-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)/g)) hosts.add(m[1]!.toLowerCase())
-  for (const m of command.matchAll(/(?<![\w.])(\d{1,3}(?:\.\d{1,3}){3})(?![\w.])/g)) hosts.add(m[1]!)
-  return [...hosts]
+/** Stand-ins for a placeholder while a command is read: a real one, and an escaped (literal) one. */
+const FILL = '\u0001'
+const LITERAL = '\u0002'
+
+/**
+ * The words of ONE simple command, quotes removed, or what makes it more than that (or unclear): a chain or
+ * pipe, a substitution, a variable, a redirection, a subshell or script block, a comment, a newline, an
+ * unclosed quote. A placeholder reads as one character. PowerShell's `@{ … }` hashtable is allowed.
+ */
+export const commandWords = (command: string, shell: 'bash' | 'powershell'): { words: string[] } | { error: string } => {
+  const text = command.replace(new RegExp(PLACEHOLDER_RE.source, 'g'), (_m, escaped: string) => (escaped ? LITERAL : FILL)).trim()
+  const escapeChar = shell === 'powershell' ? '`' : '\\'
+  const words: string[] = []
+  let word = ''
+  let inWord = false
+  let quote: '' | "'" | '"' = ''
+  let hashtables = 0
+  const end = () => {
+    if (inWord) words.push(word)
+    word = ''
+    inWord = false
+  }
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!
+    const next = text[i + 1] ?? ''
+    if (quote === "'") {
+      if (ch !== "'") word += ch
+      else if (shell === 'powershell' && next === "'") {
+        word += "'"
+        i += 1
+      } else quote = ''
+      continue
+    }
+    if (ch === '$') return { error: 'a variable or substitution ($…)' }
+    if (ch === '`' && shell === 'bash') return { error: 'a backtick substitution' }
+    if (quote === '"') {
+      // In bash's double quotes a backslash escapes only $ ` " \ and a newline; before anything else it stays.
+      const escapes = shell === 'powershell' ? next !== '' : '$`"\\\n'.includes(next) && next !== ''
+      if ((ch === escapeChar && escapes) || (ch === '"' && shell === 'powershell' && next === '"')) {
+        word += next
+        i += 1
+      } else if (ch === '"') quote = ''
+      else word += ch
+      continue
+    }
+    if (ch === '\n' || ch === '\r') return { error: 'more than one line' }
+    if (ch === escapeChar) {
+      if (!next || next === '\n' || next === '\r') return { error: 'a line continuation' }
+      word += next
+      inWord = true
+      i += 1
+    } else if (ch === ' ' || ch === '\t') end()
+    else if (ch === "'" || ch === '"') {
+      quote = ch
+      inWord = true
+    } else if (ch === ';' || ch === '&' || ch === '|') return { error: `a chain or pipe (${ch})` }
+    else if (ch === '<' || ch === '>') return { error: `a redirection (${ch})` }
+    else if (ch === '(' || ch === ')') return { error: 'a subshell or subexpression' }
+    else if (ch === '#' && !inWord) return { error: 'a comment (#)' }
+    else if (ch === '{' && shell === 'powershell' && word === '@') {
+      hashtables += 1
+      word += ch
+      end()
+    } else if (ch === '}' && hashtables > 0 && !inWord) {
+      hashtables -= 1
+      words.push('}')
+    } else if (ch === '{' || ch === '}') return { error: shell === 'powershell' ? 'a script block ({…})' : 'braces ({…})' }
+    else {
+      word += ch
+      inWord = true
+    }
+  }
+  if (quote) return { error: 'an unclosed quote' }
+  end()
+  return { words }
+}
+
+/** Programs that run other programs or code: a secret is never filled into them, whatever the Allow list says. */
+export const NEVER_ALLOWED: ReadonlySet<string> = new Set([
+  'sh', 'bash', 'zsh', 'dash', 'ksh', 'fish', 'csh', 'tcsh', 'ash', 'busybox', 'pwsh', 'powershell', 'cmd', 'wsl', 'start',
+  'node', 'nodejs', 'deno', 'bun', 'tsx', 'ts-node', 'npx', 'bunx', 'pnpx', 'python', 'python2', 'python3', 'py', 'pypy',
+  'ruby', 'irb', 'perl', 'php', 'lua', 'osascript', 'cscript', 'wscript', 'mshta', 'rundll32',
+  'env', 'xargs', 'sudo', 'doas', 'su', 'runas', 'exec', 'eval', 'command', 'builtin', 'source', '.', 'nohup', 'time',
+  'timeout', 'watch', 'nice', 'stdbuf', 'setsid', 'chroot', 'script', 'expect', 'parallel', 'find', 'awk', 'gawk', 'sed',
+  'iex', 'invoke-expression', 'invoke-command', 'icm', 'start-process', 'saps', 'start-job',
+])
+
+/** Options that send a request through another host, run a command, or read settings from a file. */
+const REFUSED_OPTION_RE = /^--?(?:proxy|socks|preproxy|config|resolve|connect-to|doh-url|execute|input-file|upload-pack|receive-pack|exec)/i
+/** `ProxyCommand=…` and the like (an ssh `-o`, a wget `-e`), and `*_PROXY=` settings. */
+const REFUSED_SETTING_RE = /^(?:\w*proxy\w*|localcommand|permitlocalcommand|remotecommand)=/i
+/** Short options with the same effect, per program (`-x` proxy and `-K` config for curl, `-e`/`-i` for wget…). */
+const REFUSED_SHORT: Readonly<Record<string, string>> = { curl: 'xK', wget: 'ei', git: 'c', ssh: 'FJ', scp: 'FJ', sftp: 'FJ' }
+/** Options whose next word is a local file, per program: that word is not a host. */
+const FILE_OPTIONS: Readonly<Record<string, readonly string[]>> = {
+  curl: ['-o', '--output', '-T', '--upload-file', '--cacert', '--cert', '-E', '--key', '--capath', '--netrc-file', '-b', '--cookie', '-c', '--cookie-jar', '-D', '--dump-header', '--trace', '--trace-ascii', '--stderr', '--output-dir'],
+  wget: ['-O', '--output-document', '-o', '--output-file', '-a', '--append-output', '-P', '--directory-prefix', '--load-cookies', '--save-cookies', '--ca-certificate', '--certificate', '--private-key'],
+  kubectl: ['-f', '--filename', '--kubeconfig'],
+  'invoke-webrequest': ['-outfile', '-infile'],
+  'invoke-restmethod': ['-outfile', '-infile'],
+}
+/** Programs where `name:path` names a host even without a dot (scp-style). */
+const REMOTE_PATH_PROGRAMS: ReadonlySet<string> = new Set(['scp', 'rsync', 'sftp', 'ssh', 'git'])
+
+const AMBIGUOUS = '\u0000ambiguous'
+const HOST_RE = /^(?:(?:[a-z0-9_-]+\.)+[a-z][a-z0-9-]{1,62}\.?|localhost|(?:0x[0-9a-f]+|\d+)(?:\.(?:0x[0-9a-f]+|\d+)){1,3}|\d{8,10}|0x[0-9a-f]{8}|\[[0-9a-f:.]+\])$/i
+
+/** The host a word names, as a program would read it: a URL's, `user@host`, `host:port`, a bare host or IP. */
+const hostOf = (raw: string, program: string): string | null => {
+  const word = raw.trimStart().split(/\s/)[0] ?? ''
+  if (/^[a-z][\w+.-]*::/i.test(word)) return AMBIGUOUS
+  const url = /^([a-z][a-z0-9+.-]+):([\\/]+)([^/?#]*)/i.exec(word)
+  if (url) {
+    // A backslash where the host is read (`https://evil\@good`, `https:\\evil`) is read differently by each program.
+    if (url[2] !== '//' || url[3]!.includes('\\')) return AMBIGUOUS
+    const hostPort = url[3]!.slice(url[3]!.lastIndexOf('@') + 1)
+    const host = hostPort.startsWith('[') ? hostPort.slice(0, hostPort.indexOf(']') + 1) : hostPort.replace(/:[^:]*$/, '')
+    return host ? host.toLowerCase() : null
+  }
+  if (word.includes('\\')) return /^[a-z]:\\/i.test(word) ? null : AMBIGUOUS
+  const afterAt = word.includes('@') ? word.slice(word.lastIndexOf('@') + 1) : null
+  const candidate = (afterAt ?? word).split('/')[0]!
+  if (/^[a-z]:$/i.test(candidate)) return null
+  const name = candidate.startsWith('[') ? candidate.slice(0, candidate.indexOf(']') + 1) : candidate.replace(/:.*$/, '')
+  if (HOST_RE.test(name)) return name.toLowerCase()
+  // `user@box`, or `box:path` for a program that copies to remote paths: a host without a dot.
+  if (/^[\w-]+$/.test(name) && (afterAt !== null || (candidate.includes(':') && REMOTE_PATH_PROGRAMS.has(program)))) return name.toLowerCase()
+  return null
 }
 
 /** An allow item is a host when it has a dot or a colon, a command otherwise. */
@@ -412,17 +608,49 @@ export const isHostItem = (item: string): boolean => /[.:]/.test(item)
 export const parseAllow = (text: string): string[] =>
   [...new Set(text.split(/[\s,]+/).map(s => s.trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/\/.*$/, '')).filter(Boolean))]
 
+const hostAllowed = (host: string, hosts: readonly string[]): boolean => {
+  const h = host.replace(/\.$/, '')
+  return hosts.some(item => {
+    const allowed = item.startsWith('[') ? item.slice(0, item.indexOf(']') + 1) : item.replace(/:\d+$/, '')
+    return h === allowed || h.endsWith(`.${allowed}`)
+  })
+}
+
+const shown = (text: string): string => text.replace(new RegExp(`[${FILL}${LITERAL}]`, 'g'), '…')
+
 /**
- * What `allow` does not cover in this command: its first program, or a host it names; null when the
- * program is allowed and every host is (a host item also covers its subdomains).
+ * Why a secret with this Allow list may not be filled into `command`, as the rest of a sentence that starts
+ * with "secret NAME"; null when it may. Fails closed: one simple command only, run by name by a program on
+ * the list (never a shell, interpreter or wrapper), no environment assignments, no proxy or config options,
+ * and every host any word names is on the list (a host item covers its subdomains).
  */
-export const disallowedUse = (allow: readonly string[], command: string): string | null => {
-  const program = firstProgram(command)
+export const disallowedUse = (allow: readonly string[], command: string, shell: 'bash' | 'powershell' = 'bash'): string | null => {
+  const parsed = commandWords(command, shell)
+  if ('error' in parsed) return `is filled into one simple command only, and this one has ${parsed.error}. Run the command that needs it on its own, with the host written out`
+  const [first, ...rest] = parsed.words
+  if (!first) return "isn't allowed for an empty command"
+  if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(first)) return `isn't filled into a command that sets environment variables first (${shown(first.split('=')[0]!)}=…)`
+  if (/[\\/]/.test(first)) return `isn't filled into a program run by its path (${shown(first)}); run it by name`
+  const program = programName(first)
+  if (NEVER_ALLOWED.has(program)) return `is never filled into ${program}: it runs other programs or code`
   const commands = allow.filter(a => !isHostItem(a))
   const hosts = allow.filter(isHostItem)
-  if (!program || !commands.includes(program)) return program ?? 'this command'
-  for (const host of hostsIn(command)) {
-    if (!hosts.some(h => host === h || host.endsWith(`.${h}`))) return host
+  if (!commands.includes(program)) return `isn't allowed for ${program}; the user can allow it in /secrets`
+  const short = REFUSED_SHORT[program] ?? ''
+  const fileOptions = FILE_OPTIONS[program] ?? []
+  const isFileOption = (option: string) => fileOptions.includes(option.length === 2 ? option : option.toLowerCase())
+  for (let i = 0; i < rest.length; i += 1) {
+    const word = rest[i]!
+    const cluster = /^-([A-Za-z]+)/.exec(word)?.[1] ?? ''
+    if (REFUSED_OPTION_RE.test(word) || REFUSED_SETTING_RE.test(word) || (!word.startsWith('--') && [...cluster].some(c => short.includes(c)))) {
+      return `isn't filled into a command with ${shown(word.split('=')[0]!)}: it can send the request through another host, run a command or read settings from a file`
+    }
+    if (word.startsWith('@') || (i > 0 && isFileOption(rest[i - 1]!))) continue
+    const option = /^(-[^=]+)=([\s\S]*)$/.exec(word)
+    if (option && isFileOption(option[1]!)) continue
+    const host = hostOf(word.startsWith('-') ? (option?.[2] ?? '') : word, program)
+    if (host === AMBIGUOUS) return `isn't filled in: ${shown(word)} can be read as more than one host. Write the URL plainly`
+    if (host !== null && !hostAllowed(host, hosts)) return `isn't allowed for ${shown(host)}; the user can allow it in /secrets`
   }
   return null
 }
@@ -477,8 +705,9 @@ export const sectionText = (names: readonly string[]): string =>
   [
     '# Secrets',
     "The user keeps secrets (API keys, tokens, passwords) in nanoflow's vault, out of your sight. Never print, echo, log, transform or ask the user to paste a secret value, and never try to read one back.",
-    'Where a value is needed, write the placeholder {{secret:NAME}} in a Bash or PowerShell command, or in the content of a Write or Edit to a git-ignored file (such as .env). It is filled in when the tool runs, only for the commands and hosts the user allowed for that secret. A value that comes back in output shows as the placeholder again, or as «redacted:<kind>» for a secret the vault does not hold.',
+    'Where a value is needed, write the placeholder {{secret:NAME}} in ONE simple Bash or PowerShell command (no ;, &&, ||, pipes, $(...), variables, redirections or comments), with the program and host written out. It is filled in when the tool runs, only for the programs and hosts the user allowed for that secret, never for a shell or interpreter. In the content of a Write or Edit it is filled in only when the user allowed that secret in files, and only into a git-ignored file (such as .env) unless they also allowed tracked files. A value that comes back in output shows as the placeholder again, or as «redacted:<kind>» for a secret the vault does not hold.',
     'Never write a «redacted:...» mark into a file: it stands for a value you never saw. To write the placeholder text itself (in docs or templates), escape it with a backslash: \\{{secret:NAME}}.',
+    "Only the user changes what a secret may be used for, in the Secrets pane: never read or change nanoflow's store or its settings.",
     'If a secret you need is not in the vault, or not allowed for a command or host, ask the user to add or allow it with /secrets (the Secrets pane), naming it in UPPER_SNAKE_CASE.',
     names.length ? `Available secret names: ${names.join(', ')}.` : 'The vault is empty.',
   ].join('\n')

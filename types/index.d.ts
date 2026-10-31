@@ -66,7 +66,14 @@ export type NfSecret = {
   allow: string[]
   /** Whether it may be written into a file git tracks (the user's choice, off by default). */
   allowTracked: boolean
+  /** Whether it may be written into files at all (git-ignored ones; the user's choice, off by default). */
+  allowFiles: boolean
+  /** What the store allows beyond what the user set in the pane (changed elsewhere, not in force). */
+  changed: string[]
 }
+
+/** What the user allowed a secret for, in the pane. */
+export type NfSecretPolicy = { allow: string[]; allowTracked: boolean; allowFiles: boolean }
 
 export type NfSecretsNote = { text: string; tone: NfTone }
 
@@ -105,6 +112,12 @@ declare module 'claude-code' {
       secretsAddScope: NfSecretScope
       /** The secrets the last prompt stored on its own, for Undo. */
       secretsPasted: { names: string[]; scope: NfSecretScope } | null
+      /**
+       * Each secret's policy as the user last set it in the pane (by scope, project and name), or null until the
+       * store is first read. Held by the host for the session: no tool call can write it, so a wider policy
+       * in the store file is not used until the user accepts it in the pane.
+       */
+      secretsTrusted: Record<string, NfSecretPolicy> | null
     }
   }
 }

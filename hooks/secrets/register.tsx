@@ -1,6 +1,8 @@
 // Secrets: values the person keeps in nanoflow's vault and the model never reads. The model writes
 // {{secret:NAME}}; tool.call fills it in as the tool runs, only for the commands and hosts the person allowed
-// for that secret, quoted for the shell, and into git-ignored files only. What the model reads is masked on
+// for that secret (one simple command), quoted for the shell, and into files only when the person allowed
+// that too (git-ignored ones, unless tracked ones as well). The policy in force is never wider than what the
+// person set in the pane this session (held by the host, out of any tool's reach). What the model reads is masked on
 // its way into the conversation (session.append), as are injected attachments and outgoing messages; a
 // token pasted into a prompt is vaulted as PASTED_<n> first. A guard against accidents, not against a
 // hostile agent: see docs/secrets.md. Wired from ../register, LAST, so its tool.call hook is the innermost
@@ -9,9 +11,9 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, On } from 'claude-code'
 import type { NfSecret, NfSecretScope, NfTone } from '../../types'
 import {
-  allValues, checkName, disallowedUse, effectiveEntries, firstProgram, isExampleFile, nextPastedName, parseAllow, parseEnv,
-  parseVaultStore, placeholderNames, REDACTED_MARK, redact, redactContent, SECTION_ID, sectionText, substitute, valuesOf,
-  VAULT_KEY, type Entry, type Shell, type VaultStore,
+  allValues, checkName, disallowedUse, effectiveEntries, firstProgram, isExampleFile, NEVER_ALLOWED, NO_POLICY, narrowPolicy, nextPastedName, parseAllow,
+  parseEnv, parseVaultStore, placeholderNames, policiesOf, policyOf, redact, redactContent, SECTION_ID, sectionText, substitute, trustKey,
+  trustKeyIn, valuesOf, VAULT_KEY, widenedBy, writesMarkAsValue, type Entry, type Policy, type Shell, type VaultStore,
 } from './redact'
 import { SecretsView, type SecretsHandlers } from './view'
 
@@ -32,6 +34,22 @@ export const FILLED: Readonly<Record<string, { fields: readonly string[]; shell:
 /** The fields of a file write that must never carry a «redacted:…» mark. */
 const WRITTEN: Readonly<Record<string, readonly string[]>> = { Write: ['content'], Edit: ['new_string'], NotebookEdit: ['new_source'] }
 
+/**
+ * Commands and paths that reach nanoflow's store file (where each secret's policy is kept) or the
+ * secretsAllowTrackedWrites setting. A heuristic first line; the trusted policy below is what holds.
+ */
+const touchesSecretsConfig = (tool: string, input: Readonly<Record<string, unknown>>): boolean => {
+  const str = (field: string): string => (typeof input[field] === 'string' ? input[field] : '')
+  const storeRe = /plugins[\\/]+store|cc-plugin-nanoflow/i
+  const settingsRe = /pluginConfigs|secretsAllowTrackedWrites/
+  const command = str('command')
+  if (command) return storeRe.test(command) || (/plugins/i.test(command) && /\bstore\b/i.test(command)) || (/settings(?:\.local)?\.json/i.test(command) && settingsRe.test(command))
+  const paths = ['file_path', 'path', 'notebook_path'].map(str).filter(Boolean)
+  if (paths.some(p => storeRe.test(p))) return true
+  if (paths.some(p => /settings(?:\.local)?\.json$/i.test(p)) && (WRITTEN[tool] ?? []).some(f => settingsRe.test(str(f)))) return true
+  return false
+}
+
 const listAtom = atom({ plugin: 'nanoflow', key: 'secrets' } as const, [])
 const projectAtom = atom({ plugin: 'nanoflow', key: 'secretsProject' } as const, { root: null, cwd: '' })
 const revealAtom = atom({ plugin: 'nanoflow', key: 'secretsReveal' } as const, null)
@@ -42,6 +60,7 @@ const formAtom = atom({ plugin: 'nanoflow', key: 'secretsForm' } as const, 0)
 const draftAtom = atom({ plugin: 'nanoflow', key: 'secretsDraft' } as const, '')
 const addScopeAtom = atom({ plugin: 'nanoflow', key: 'secretsAddScope' } as const, 'project')
 const pastedAtom = atom({ plugin: 'nanoflow', key: 'secretsPasted' } as const, null)
+const trustedAtom = atom({ plugin: 'nanoflow', key: 'secretsTrusted' } as const, null)
 
 /**
  * Module memory, reset by a reload: the last vault values read (so a hook that overran still masks them),
@@ -93,11 +112,39 @@ async function maskValues($: $): Promise<Array<[string, string]>> {
   }
 }
 
+/**
+ * The policies the user set in the pane, by trust key: held by the host for the session (no tool call can
+ * write it). On the session's first read it starts as the store's policies as they stand.
+ */
+async function trustedPolicies($: $, store: VaultStore): Promise<Record<string, Policy>> {
+  const held = await read($, trustedAtom)
+  if (held) return held
+  const baseline = policiesOf(store)
+  // Nothing to trust yet (an empty or unreadable store): the first one read with entries becomes the baseline.
+  if (Object.keys(baseline).length === 0) return baseline
+  await update($, trustedAtom, current => current ?? baseline)
+  return (await read($, trustedAtom)) ?? baseline
+}
+
+/** A secret's policy in force: the store's, no wider than the trusted one; and what the store adds beyond it. */
+async function policyInForce($: $, store: VaultStore, root: string | null, name: string): Promise<{ policy: Policy; changed: string[] }> {
+  const entry = effectiveEntries(store, root)[name]
+  if (!entry) return { policy: NO_POLICY, changed: [] }
+  const trusted = (await trustedPolicies($, store))[trustKeyIn(store, root, name)]
+  return { policy: narrowPolicy(policyOf(entry), trusted), changed: widenedBy(policyOf(entry), trusted) }
+}
+
 async function publish($: $, store: VaultStore): Promise<void> {
   const root = await projectRoot($)
-  const row = (scope: NfSecretScope) => ([name, e]: [string, Entry]): NfSecret => ({
-    id: idOf(scope, name), name, scope, length: e.value.length, allow: e.allow, allowTracked: e.allowTracked === true,
-  })
+  const trusted = await trustedPolicies($, store)
+  const row = (scope: NfSecretScope) => ([name, e]: [string, Entry]): NfSecret => {
+    const t = trusted[trustKey(scope, root, name)]
+    const p = narrowPolicy(policyOf(e), t)
+    return {
+      id: idOf(scope, name), name, scope, length: e.value.length, allow: p.allow, allowTracked: p.allowTracked, allowFiles: p.allowFiles,
+      changed: widenedBy(policyOf(e), t),
+    }
+  }
   const list = [
     ...(root ? Object.entries(store.projects[root] ?? {}).sort().map(row('project')) : []),
     ...Object.entries(store.global).sort().map(row('global')),
@@ -114,14 +161,20 @@ const scopeOf = (store: VaultStore, scope: NfSecretScope, root: string | null): 
 
 /**
  * Changes the vault: one change at a time in this session, each re-reading the store right before it writes
- * (another session may have written meanwhile). The one place the vault is written.
+ * (another session may have written meanwhile). The one place the vault is written, and with the pane's
+ * changes, the one place the trusted policies change.
  */
-async function changeStore($: $, change: (store: VaultStore, root: string | null) => void): Promise<VaultStore> {
+async function changeStore(
+  $: $,
+  change: (store: VaultStore, root: string | null, trusted: Record<string, Policy>) => void,
+): Promise<VaultStore> {
   const run = M.writing.then(async () => {
     const store = await readStore($)
     const root = await projectRoot($)
-    change(store, root)
+    const trusted = structuredClone(await trustedPolicies($, store))
+    change(store, root, trusted)
     await $.store.set(VAULT_KEY, store)
+    await update($, trustedAtom, () => trusted)
     M.lastValues = allValues(store, root)
     await publish($, store)
     return store
@@ -192,15 +245,27 @@ async function resolvePath($: $, raw: string): Promise<string> {
 
 const dirOf = (path: string): string => path.replace(/\\/g, '/').replace(/\/[^/]*$/, '') || '/'
 
-/** Whether git ignores `path` (or it is in no repository, so nothing commits it). */
+/**
+ * Whether git ignores `path` and does not track it (or it is in no repository, so nothing commits it). A file
+ * git tracks counts as tracked even when an ignore rule lists it: the next commit still takes it.
+ */
 async function isIgnored($: $, path: string): Promise<boolean> {
   try {
-    const { exitCode, stderr } = await $.process.run(['git', 'check-ignore', '-q', '--no-index', path], { cwd: dirOf(path), timeoutMs: 10_000 })
-    if (exitCode === 0) return true
-    return exitCode === 128 && /not a git repository/i.test(stderr)
+    const opts = { cwd: dirOf(path), timeoutMs: 10_000 }
+    const tracked = await $.process.run(['git', 'ls-files', '--error-unmatch', '--', path], opts)
+    if (tracked.exitCode === 0) return false
+    if (tracked.exitCode === 128 && /not a git repository/i.test(tracked.stderr)) return true
+    const { exitCode } = await $.process.run(['git', 'check-ignore', '-q', '--no-index', '--', path], opts)
+    return exitCode === 0
   } catch {
     return false
   }
+}
+
+/** The trust key of the pane row `id` in a session in `root`. */
+const trustKeyOf = (id: string, root: string | null): string => {
+  const { scope, name } = fromId(id)
+  return trustKey(scope, root, name)
 }
 
 const handlers = ($: $): SecretsHandlers => ({
@@ -226,8 +291,9 @@ const handlers = ($: $): SecretsHandlers => ({
   confirmDelete: id => {
     void (async () => {
       const { scope, name } = fromId(id)
-      await changeStore($, (s, r) => {
+      await changeStore($, (s, r, trusted) => {
         delete scopeOf(s, scope, r)[name]
+        delete trusted[trustKeyOf(id, r)]
       })
       await update($, confirmAtom, () => null)
       await update($, revealAtom, shown => (shown?.id === id ? null : shown))
@@ -242,12 +308,16 @@ const handlers = ($: $): SecretsHandlers => ({
       const { scope, name: from } = fromId(id)
       const name = checked.name
       if (name !== from && scopeOf(await readStore($), scope, await projectRoot($))[name] !== undefined) return void (await note($, `${name} already exists.`, 'error'))
-      await changeStore($, (s, r) => {
+      await changeStore($, (s, r, trusted) => {
         const entries = scopeOf(s, scope, r)
         const entry = entries[from]
         if (!entry) return
         delete entries[from]
         entries[name] = entry
+        const [fromKey, toKey] = [trustKey(scope, r, from), trustKey(scope, r, name)]
+        if (trusted[fromKey]) trusted[toKey] = trusted[fromKey]
+        else delete trusted[toKey]
+        delete trusted[fromKey]
       })
       await update($, renameAtom, () => null)
       await note($, `✏️ Renamed ${from} to ${name}`, 'success')
@@ -255,23 +325,32 @@ const handlers = ($: $): SecretsHandlers => ({
   },
   allow: (id, text) => {
     void (async () => {
-      const items = parseAllow(text)
-      if (items.length === 0) return
+      const parsed = parseAllow(text)
+      const refused = parsed.filter(item => NEVER_ALLOWED.has(item))
+      const items = parsed.filter(item => !NEVER_ALLOWED.has(item))
+      const why = refused.length ? `${refused.join(', ')} can't be allowed: ${refused.length === 1 ? 'it runs' : 'they run'} other programs or code, so the secret could go anywhere.` : ''
+      if (items.length === 0) return void (why && (await note($, why, 'error')))
       const { scope, name } = fromId(id)
-      await changeStore($, (s, r) => {
+      await changeStore($, (s, r, trusted) => {
         const entry = scopeOf(s, scope, r)[name]
-        if (entry) entry.allow = [...new Set([...entry.allow, ...items])]
+        if (!entry) return
+        entry.allow = [...new Set([...entry.allow, ...items])]
+        const key = trustKeyOf(id, r)
+        const t = trusted[key] ?? NO_POLICY
+        trusted[key] = { ...t, allow: [...new Set([...t.allow, ...items])] }
       })
       await update($, formAtom, n => n + 1)
-      await note($, `✅ ${name} may now be used with ${items.join(', ')}`, 'success')
+      await note($, `✅ ${name} may now be used with ${items.join(', ')}${why ? `. ${why}` : ''}`, why ? 'warning' : 'success')
     })()
   },
   unallow: (id, item) => {
     void (async () => {
       const { scope, name } = fromId(id)
-      await changeStore($, (s, r) => {
+      await changeStore($, (s, r, trusted) => {
         const entry = scopeOf(s, scope, r)[name]
         if (entry) entry.allow = entry.allow.filter(a => a !== item)
+        const key = trustKeyOf(id, r)
+        if (trusted[key]) trusted[key] = { ...trusted[key], allow: trusted[key].allow.filter(a => a !== item) }
       })
     })()
   },
@@ -294,7 +373,7 @@ const handlers = ($: $): SecretsHandlers => ({
       const scope = await read($, addScopeAtom)
       await changeStore($, (s, r) => {
         const entries = scopeOf(s, scope, r)
-        entries[checked.name] = { value, allow: entries[checked.name]?.allow ?? [] }
+        entries[checked.name] = { ...(entries[checked.name] ?? { allow: [] }), value }
       })
       await update($, draftAtom, () => '')
       await update($, formAtom, n => n + 1)
@@ -313,28 +392,72 @@ const handlers = ($: $): SecretsHandlers => ({
       const scope = await read($, addScopeAtom)
       await changeStore($, (s, r) => {
         const target = scopeOf(s, scope, r)
-        for (const e of entries) target[e.name] = { value: e.value, allow: target[e.name]?.allow ?? [] }
+        for (const e of entries) target[e.name] = { ...(target[e.name] ?? { allow: [] }), value: e.value }
       })
       await update($, formAtom, n => n + 1)
       await note($, `📥 Imported ${entries.length} from ${path}: ${entries.map(e => e.name).join(', ')}`, 'success')
     })()
   },
   undoPasted: () => void undoPasted($),
+  toggleFiles: id => {
+    void (async () => {
+      const now = await toggleFlag($, id, 'allowFiles')
+      const name = fromId(id).name
+      await note($, now ? `📄 ${name} may now be written into git-ignored files (.env).` : `📄 ${name} is no longer written into files.`, now ? 'warning' : 'success')
+    })()
+  },
   toggleTracked: id => {
     void (async () => {
-      const { scope, name } = fromId(id)
-      let now = false
-      await changeStore($, (s, r) => {
-        const entry = scopeOf(s, scope, r)[name]
-        if (!entry) return
-        now = entry.allowTracked !== true
-        if (now) entry.allowTracked = true
-        else delete entry.allowTracked
-      })
+      const now = await toggleFlag($, id, 'allowTracked')
+      const name = fromId(id).name
       await note($, now ? `📝 ${name} may now be written into files git tracks.` : `📝 ${name} is written only into git-ignored files again.`, now ? 'warning' : 'success')
     })()
   },
+  acceptChange: id => {
+    void (async () => {
+      const { scope, name } = fromId(id)
+      await changeStore($, (s, r, trusted) => {
+        const entry = scopeOf(s, scope, r)[name]
+        if (entry) trusted[trustKeyOf(id, r)] = policyOf(entry)
+      })
+      await note($, `✅ ${name}: the change made outside this pane is now in force.`, 'warning')
+    })()
+  },
+  revertChange: id => {
+    void (async () => {
+      const { scope, name } = fromId(id)
+      await changeStore($, (s, r, trusted) => {
+        const entry = scopeOf(s, scope, r)[name]
+        if (!entry) return
+        const p = narrowPolicy(policyOf(entry), trusted[trustKeyOf(id, r)])
+        entry.allow = p.allow
+        setFlag(entry, 'allowTracked', p.allowTracked)
+        setFlag(entry, 'allowFiles', p.allowFiles)
+      })
+      await note($, `↩ ${name}: the change made outside this pane is undone.`, 'success')
+    })()
+  },
 })
+
+const setFlag = (entry: Entry, flag: 'allowTracked' | 'allowFiles', on: boolean): void => {
+  if (on) entry[flag] = true
+  else delete entry[flag]
+}
+
+/** Flips a file permission from what is in force, in the store and in the trusted policy; answers the new state. */
+async function toggleFlag($: $, id: string, flag: 'allowTracked' | 'allowFiles'): Promise<boolean> {
+  const { scope, name } = fromId(id)
+  let now = false
+  await changeStore($, (s, r, trusted) => {
+    const entry = scopeOf(s, scope, r)[name]
+    if (!entry) return
+    const key = trustKeyOf(id, r)
+    now = !narrowPolicy(policyOf(entry), trusted[key])[flag]
+    setFlag(entry, flag, now)
+    trusted[key] = { ...(trusted[key] ?? NO_POLICY), [flag]: now }
+  })
+  return now
+}
 
 /** Call from the module's one `session.start` hook, after `next`: finds the project, registers /secrets. */
 export async function startSecrets($: $, cwd: string): Promise<void> {
@@ -369,6 +492,7 @@ export const registerSecrets = (on: On, options: SecretsOptions): void => {
   on('command.run', { command: SECRETS_COMMAND }, async ($, e) => {
     if (e.args.trim().toLowerCase() === 'undo') return { text: await undoPasted($) }
     await update($, noteAtom, () => null)
+    await publish($, await storeOrEmpty($))
     const opened = await $.ui.open({ id: SECRETS_PANE, title: 'Secrets', focus: true })
     if (!opened.isPlaced) return { text: `Secrets: the pane is open but not shown: ${opened.reason}` }
     return { text: 'Secrets pane opened.' }
@@ -414,42 +538,71 @@ export const registerSecrets = (on: On, options: SecretsOptions): void => {
     return next(e)
   }).catch(($, e, next) => next(e))
 
+  // ─── the store and the settings that hold each secret's policy are the user's, changed in the pane ──
+
+  on('tool.call', { tool: ['Bash', 'PowerShell', 'Write', 'Edit', 'NotebookEdit', 'Read', 'Glob', 'Grep'] }, ($, e, next) => {
+    const tool = String(e.tool)
+    if (touchesSecretsConfig(tool, e as unknown as Record<string, unknown>)) {
+      return { deny: `${tool} refused: this reaches nanoflow's secrets store or its settings, where each secret's value and policy are kept. Only the user changes those, in /secrets.` }
+    }
+    return next(e)
+  }).catch(($, e, next) => (next.called ? next(e) : { deny: 'nanoflow secrets could not check this call; try again.' }))
+
   // ─── in: a placeholder filled in as the tool runs, only where the person allowed it ─────────────
 
   on('tool.call', { tool: ['Bash', 'PowerShell', 'Write', 'Edit', 'NotebookEdit'] }, async ($, e, next) => {
     const tool = String(e.tool)
     const input = e as unknown as Record<string, unknown>
     const text = (field: string): string => (typeof input[field] === 'string' ? input[field] : '')
-    if ((WRITTEN[tool] ?? []).some(field => text(field).includes(REDACTED_MARK))) {
-      return { deny: `${tool} refused: the new content holds a «redacted:…» mark, which stands for a secret value you never saw; writing it would replace the real value in the file. Leave that line as it is (edit around it), or ask the user to change it.` }
+    if ((WRITTEN[tool] ?? []).some(field => writesMarkAsValue(text(field), text('file_path') || text('notebook_path')))) {
+      return { deny: `${tool} refused: the new content puts a «redacted:…» mark where a value goes; it stands for a secret value you never saw; writing it would replace the real value in the file. Leave that line as it is (edit around it), or ask the user to change it.` }
     }
     const spec = FILLED[tool]
     if (!spec || !spec.fields.some(field => text(field).includes('{{secret:'))) return next(e)
     const used = [...new Set(spec.fields.flatMap(field => placeholderNames(text(field))))]
     const isFile = spec.shell === 'raw'
     const target = isFile ? text('file_path') : text('command')
+    const store = await storeOrEmpty($)
+    const root = await projectRoot($)
     if (used.length > 0) {
-      const entries = effectiveEntries(await storeOrEmpty($), await projectRoot($))
+      const entries = effectiveEntries(store, root)
       const missing = used.filter(name => entries[name] === undefined)
       if (missing.length) {
         const one = missing.length === 1
         return { deny: `secret ${missing.join(', ')} ${one ? "isn't" : "aren't"} in the vault; ask the user to add ${one ? 'it' : 'them'} with /secrets` }
       }
+      // The policy in force: what the user set in the pane, even if the store file now says more.
+      const policies: Policy[] = []
+      for (const name of used) {
+        const { policy, changed } = await policyInForce($, store, root, name)
+        const blocked = isFile
+          ? policy.allowFiles ? null : "isn't allowed in files; the user can allow writing it into git-ignored files in /secrets"
+          : disallowedUse(policy.allow, target, spec.shell === 'powershell' ? 'powershell' : 'bash')
+        if (blocked) {
+          if (changed.length) {
+            // The pane shows the change, to accept or undo.
+            await publish($, store)
+            $.ui.toast(`⚠ ${name}'s policy was changed outside /secrets; review it there`)
+          }
+          const why = changed.length ? ' (its policy in the store was widened outside the Secrets pane; that change is not used until the user accepts it in /secrets)' : ''
+          return { deny: `secret ${name} ${blocked}${why}` }
+        }
+        policies.push(policy)
+      }
       // Into a git-ignored file only, unless the user allowed tracked files for each secret used (or for all).
-      const mayTrack = M.allowTrackedWrites || used.every(name => entries[name]!.allowTracked === true)
+      const mayTrack = M.allowTrackedWrites || policies.every(p => p.allowTracked)
       if (isFile && !mayTrack && !(await isIgnored($, target))) {
         return { deny: `${tool} refused: won't write a real secret into a tracked file (${target} is not ignored by git); the user can allow this in /secrets. Otherwise write it to a git-ignored file such as .env, or, to write the placeholder text itself, escape it as \\{{secret:NAME}}.` }
       }
-      if (!isFile) {
-        for (const name of used) {
-          const blocked = disallowedUse(entries[name]!.allow, target)
-          if (blocked) return { deny: `secret ${name} isn't allowed for ${blocked}; the user can allow it in /secrets` }
-        }
-      }
     }
-    const vault = valuesOf(effectiveEntries(await storeOrEmpty($), await projectRoot($)))
+    const vault = valuesOf(effectiveEntries(store, root))
     const filled: Record<string, unknown> = { ...input }
-    for (const field of spec.fields) if (typeof input[field] === 'string') filled[field] = substitute(input[field], vault, spec.shell).text
+    for (const field of spec.fields) {
+      if (typeof input[field] !== 'string') continue
+      const out = substitute(input[field], vault, spec.shell)
+      if (out.refused) return { deny: `${tool} refused: a secret is filled into one simple command only, and this one has ${out.refused}` }
+      filled[field] = out.text
+    }
     if (used.length > 0) {
       const where = isFile ? (target.split(/[\\/]/).pop() ?? target) : (firstProgram(target) ?? tool)
       $.ui.toast(`🔐 Used ${used.join(', ')} in ${where}`)
