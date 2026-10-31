@@ -57,6 +57,12 @@ export const Mark = (el: PaneElements, key: string, look: Look, text = '') => {
   return <Text key={key} color={look.color}>{`${look.icon}${text}`}</Text>
 }
 
+/** A plain button that folds and unfolds what follows it: `▾ label` open, `▸ label` closed. */
+export const Fold = (el: PaneElements, key: string, open: boolean, label: string, onPress: () => void) => {
+  const { Button } = el
+  return <Button key={key} plain label={`${open ? '▾' : '▸'} ${label}`} onPress={onPress} />
+}
+
 /** A board column as a badge in its color. */
 export const StatusBadge = (el: PaneElements, key: string, status: string) => Badge(el, key, status, statusColor(status))
 

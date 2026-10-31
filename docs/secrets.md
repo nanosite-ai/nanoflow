@@ -14,18 +14,57 @@ easily. Claude knows the names, never the values, and writes a placeholder where
 ## Using it
 
 **`/secrets`** opens the Secrets pane. It shows **This project** (the git repository's main checkout, shared
-by its worktrees; the folder itself outside git) and **All projects**:
+by its worktrees; the folder itself outside git) and **All projects**, then the add and import forms.
 
-| In the pane | What it does |
+**A slim card per secret**: one line with its name, where it came from, its length (never a part of the
+value) and a compact policy badge:
+
+```
+╭─
+│ ▸ 🔐 PLATFORM_JWT_SECRET  imported by Claude from .secrets/.env · 2026-10-31  64 chars  🔒 nowhere
+╰─
+╭─
+│ ▾ 🔐 STRIPE_KEY  added in pane · 2026-10-30  32 chars  ✓ curl, api.stripe.com +1  📄 files
+│ [📋 Copy] [👁 Reveal] [✏️ Rename] [🗑 Delete]
+│ ▸ ⚙ Options
+╰─
+```
+
+| Badge | Means |
 |---|---|
-| **Add a secret** | Pick *This project* or *All projects*, type a name (`STRIPE_SECRET_KEY`), then the value and Enter. Both fields clear after a save. If you paste a token into the Name field, it is refused and never kept. |
-| **Allow** | The commands and hosts this secret may be used with, e.g. `kubectl, npm, api.example.com`. **A new secret is allowed nowhere**, and the pane says so until you allow something. Shells, interpreters and wrappers (`sh`, `bash`, `pwsh`, `cmd`, `node`, `python`, `env`, `xargs`, `sudo`, `iex`…) can never be allowed: they would run anything. |
-| **📄 Files** | Off by default: the secret is never written into a file. Turn it on per secret to let a Write or Edit fill it into git-ignored files (such as `.env`). |
-| **📝 Tracked files** | Shown once Files is on. Off by default: the secret is written only into git-ignored files. Turn it on per secret to allow writing it into files git tracks. |
-| **⚠ Changed outside this pane** | Shown when the store file allows more than you set here (see *Who changes a policy*). **accept** puts that change in force; **undo** writes your policy back. |
-| **Import a .env file** | Takes a path (absolute, `~/…`, or relative to the session's folder). Every `KEY=VALUE` is stored, including multi-line quoted values such as PEM keys. Only the names are shown. |
-| **📋 Copy** · **👁 Reveal** (10 s) · **✏️ Rename** · **🗑 Delete** (asks first) | Shown per row. A row shows the name and the value's length, never a part of the value. |
-| **↩ Undo** | Shown after a prompt stored a secret on its own, or after Claude imported a file; removes those secrets. `/secrets undo` does the same. |
+| `🔒 nowhere` | Allowed with no command or host yet: Claude cannot use it. |
+| `✓ curl, api.stripe.com +1` | The commands and hosts it may be used with (the first two, then how many more). |
+| `📄 files` · `📝 tracked` | It may be written into git-ignored files; into files git tracks too. |
+| `⚠ changed` | The store file allows more than you set here (see *Who changes a policy*). |
+
+**Where it came from**: *imported by Claude from `<path>`* (the `secrets_import` tool), *imported from
+`<path>`* (the pane's import), *pasted · auto-vaulted* (stored from a prompt on its own), *added in pane*,
+each with its date. A secret stored before nanoflow kept this says *source unknown*.
+
+**What needs a look is summed up once, at the top**: *⚠ 2 secrets are allowed nowhere · 1 policy changed
+outside the pane*, with **[ review ]** to open the first one with its options. Rows carry only the badge; the explanation is in
+the card's options.
+
+**Press a name to open its card** (one at a time; press again to close). An open card shows **📋 Copy** ·
+**👁 Reveal** (10 s) · **✏️ Rename** · **🗑 Delete** (asks first), and *⚠ Changed outside this pane* with
+**accept** (puts the store's wider policy in force) and **undo** (writes your policy back) when that
+happened. What the secret may be used with stays folded under **▸ ⚙ Options** until you press it:
+
+| Under ⚙ Options | What it does |
+|---|---|
+| **Allow** | The commands and hosts this secret may be used with, e.g. `kubectl, npm, api.example.com`; each allowed item has a ✕ to remove it. **A new secret is allowed nowhere**, and the details say so until you allow something. Shells, interpreters and wrappers (`sh`, `bash`, `pwsh`, `cmd`, `node`, `python`, `env`, `xargs`, `sudo`, `iex`…) can never be allowed: they would run anything. |
+| **📄 Files** | Off by default: the secret is never written into a file. Turn it on to let a Write or Edit fill it into git-ignored files (such as `.env`). |
+| **📝 Tracked files** | Shown once Files is on. Off by default: the secret is written only into git-ignored files. Turn it on to allow writing it into files git tracks. |
+
+**The forms come after the list, folded** (open on an empty vault):
+
+| Form | What it does |
+|---|---|
+| **▸ ➕ Add a secret** | Pick *This project* or *All projects*, type a name (`STRIPE_SECRET_KEY`), then the value and Enter. Both fields clear after a save, and the saved secret's card opens; allow its uses under ⚙ Options. If you paste a token into the Name field, it is refused and never kept. |
+| **▸ 📥 Import a .env file** | Takes a path (absolute, `~/…`, or relative to the session's folder) and saves where *Add* is set to. Every `KEY=VALUE` is stored, including multi-line quoted values such as PEM keys. Only the names are shown. |
+
+**↩ Undo** shows at the top after a prompt stored a secret on its own, or after Claude imported a file;
+it removes those secrets. `/secrets undo` does the same.
 
 The status line shows `🔐 <count>` when the vault has entries.
 
@@ -59,12 +98,12 @@ nanoflow reads and parses the file itself, and Claude gets back the names and le
   (a symlink to `~/.aws/credentials` is outside), and **git-ignored**. A tracked or merely untracked file, a
   path outside the project (a temp folder, `../..`) and a missing file are refused.
 - Imported secrets go to *This project* (or `scope: "global"`), are **allowed nowhere**, and show
-  *imported by Claude from .secrets/.env · <date>* in the pane. A toast says so too.
+  *imported by Claude from .secrets/.env · <date>* on their row. A toast says so too.
 - A name the session already has (in this project or all projects) is skipped: Claude never replaces or
   hides a value you stored. A name given twice in the file keeps its last value.
 - Only a file under `.secrets/` is ever deleted, once stored (`deleteAfter: false` keeps it); it is kept if
   some names were skipped, so their values are not lost. Any other file (your own `.env`) is left alone.
-- Saving your own value under an imported name in the pane makes it yours: the label goes, and undo leaves it.
+- Saving your own value under an imported name in the pane makes it yours: it becomes *added in pane*, and undo leaves it.
 - `/secrets undo` (or **↩ Undo** in the pane) removes what the last import stored.
 
 ## When a placeholder is filled in

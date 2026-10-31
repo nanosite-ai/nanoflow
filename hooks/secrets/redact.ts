@@ -14,8 +14,14 @@
  * default). Only the pane sets these, and a change made anywhere else is not trusted (see `narrowPolicy`).
  */
 export type Entry = { value: string; allow: string[]; allowTracked?: true; allowFiles?: true; source?: Source }
-/** Where a secret came from, for the pane: imported by Claude from a file (its path), when. */
-export type Source = { kind: 'agent-import'; path: string; at: number }
+/**
+ * Where a secret came from, for the pane, and when: imported from a file by Claude (`agent-import`) or in the
+ * pane (`import`), with its path; stored from a prompt on its own (`pasted`); typed in the pane (`added`).
+ * An entry stored before sources were kept has none, and the pane calls it unknown.
+ */
+export type Source =
+  | { kind: 'agent-import' | 'import'; path: string; at: number }
+  | { kind: 'pasted' | 'added'; at: number }
 export type Scope = 'project' | 'global'
 /** What `$.store` holds under VAULT_KEY: secrets for every project (by root folder) and for all projects. */
 export type VaultStore = { global: Record<string, Entry>; projects: Record<string, Record<string, Entry>> }
@@ -37,12 +43,25 @@ export const redactedMark = (kind: string): string => `${REDACTED_MARK}${kind}»
 
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
 
-const sourceOf = (raw: unknown): Source | null =>
-  isRecord(raw) && raw.kind === 'agent-import' && typeof raw.path === 'string' && typeof raw.at === 'number' ? { kind: 'agent-import', path: raw.path, at: raw.at } : null
+const sourceOf = (raw: unknown): Source | null => {
+  if (!isRecord(raw) || typeof raw.at !== 'number' || !Number.isFinite(raw.at)) return null
+  if ((raw.kind === 'agent-import' || raw.kind === 'import') && typeof raw.path === 'string') return { kind: raw.kind, path: raw.path, at: raw.at }
+  if (raw.kind === 'pasted' || raw.kind === 'added') return { kind: raw.kind, at: raw.at }
+  return null
+}
 
-/** The pane's label for where a secret came from, or null when the store does not say. */
-export const sourceLabel = (source: Source | undefined): string | null =>
-  source ? `imported by Claude from ${source.path} · ${new Date(source.at).toISOString().slice(0, 10)}` : null
+const day = (at: number): string => new Date(at).toISOString().slice(0, 10)
+
+/** The pane's label for where a secret came from; an entry from before sources were kept is `source unknown`. */
+export const sourceLabel = (source: Source | undefined): string => {
+  if (!source) return 'source unknown'
+  switch (source.kind) {
+    case 'agent-import': return `imported by Claude from ${source.path} · ${day(source.at)}`
+    case 'import': return `imported from ${source.path} · ${day(source.at)}`
+    case 'pasted': return `pasted · auto-vaulted · ${day(source.at)}`
+    case 'added': return `added in pane · ${day(source.at)}`
+  }
+}
 
 const entriesOf = (raw: unknown): Record<string, Entry> => {
   if (!isRecord(raw)) return {}
