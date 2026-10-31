@@ -98,6 +98,8 @@ const draftAtom = atom({ plugin: 'nanoflow', key: 'secretsDraft' } as const, '')
 const addScopeAtom = atom({ plugin: 'nanoflow', key: 'secretsAddScope' } as const, 'project')
 const pastedAtom = atom({ plugin: 'nanoflow', key: 'secretsPasted' } as const, null)
 const trustedAtom = atom({ plugin: 'nanoflow', key: 'secretsTrusted' } as const, null)
+const openAtom = atom({ plugin: 'nanoflow', key: 'secretsOpen' } as const, null)
+const formsAtom = atom({ plugin: 'nanoflow', key: 'secretsForms' } as const, null)
 
 /**
  * Module memory, reset by a reload: the last vault values read (so a hook that overran still masks them),
@@ -249,9 +251,11 @@ async function vaultPasted($: $, text: string): Promise<{ text: string; stored: 
   const stored = Object.keys(added)
   if (stored.length) {
     const scope: NfSecretScope = root ? 'project' : 'global'
+    // The time is only for the pane's label: without it the secret is still stored, its source unknown.
+    const at = await Promise.resolve($.clock.now()).catch(() => null)
     await changeStore($, (s, r) => {
       const entries = scopeOf(s, scope, r)
-      for (const [name, value] of Object.entries(added)) entries[name] = { value, allow: [] }
+      for (const [name, value] of Object.entries(added)) entries[name] = { value, allow: [], ...(at === null ? {} : { source: { kind: 'pasted' as const, at } }) }
     })
     await update($, pastedAtom, () => ({ names: stored, scope }))
     $.ui.toast(`🔐 Stored as ${stored.join(', ')} — rename, allow or undo in /secrets`)
@@ -418,6 +422,8 @@ const handlers = ($: $): SecretsHandlers => ({
     })()
   },
   hide: () => void update($, revealAtom, () => null),
+  setOpen: id => void update($, openAtom, () => id),
+  toggleForm: (form, shown) => void update($, formsAtom, () => (shown === form ? 'none' : form)),
   askDelete: id => void update($, confirmAtom, () => id),
   cancel: () => void update($, confirmAtom, () => null),
   confirmDelete: id => {
@@ -428,6 +434,7 @@ const handlers = ($: $): SecretsHandlers => ({
         delete trusted[trustKeyOf(id, r)]
       })
       await update($, confirmAtom, () => null)
+      await update($, openAtom, open => (open === id ? null : open))
       await update($, revealAtom, shown => (shown?.id === id ? null : shown))
       await note($, `🗑 Deleted ${name}`, 'success')
     })()
@@ -452,6 +459,7 @@ const handlers = ($: $): SecretsHandlers => ({
         delete trusted[fromKey]
       })
       await update($, renameAtom, () => null)
+      await update($, openAtom, open => (open === id ? idOf(scope, name) : open))
       await note($, `✏️ Renamed ${from} to ${name}`, 'success')
     })()
   },
@@ -503,11 +511,15 @@ const handlers = ($: $): SecretsHandlers => ({
       if ('error' in checked) return void (await note($, `Type a name first. ${checked.error}`, 'error'))
       if (!value) return void (await note($, 'The value is empty.', 'error'))
       const scope = await read($, addScopeAtom)
+      const at = await $.clock.now()
       await changeStore($, (s, r) => {
         const entries = scopeOf(s, scope, r)
-        entries[checked.name] = { ...withoutSource(entries[checked.name]), value }
+        entries[checked.name] = { ...withoutSource(entries[checked.name]), value, source: { kind: 'added', at } }
       })
       await forgetImported($, [checked.name])
+      // The saved secret opens, so what it may be used with is the next thing in view.
+      const savedId = idOf((await projectRoot($)) ? scope : 'global', checked.name)
+      await update($, openAtom, () => savedId)
       await update($, draftAtom, () => '')
       await update($, formAtom, n => n + 1)
       await note($, `🔐 Saved ${checked.name}. Allow the commands or hosts it is for, below its name.`, 'success')
@@ -523,9 +535,10 @@ const handlers = ($: $): SecretsHandlers => ({
       const entries = parseEnv(text)
       if (entries.length === 0) return void (await note($, `No KEY=VALUE lines in ${path}.`, 'warning'))
       const scope = await read($, addScopeAtom)
+      const at = await $.clock.now()
       await changeStore($, (s, r) => {
         const target = scopeOf(s, scope, r)
-        for (const e of entries) target[e.name] = { ...withoutSource(target[e.name]), value: e.value }
+        for (const e of entries) target[e.name] = { ...withoutSource(target[e.name]), value: e.value, source: { kind: 'import', path, at } }
       })
       await forgetImported($, entries.map(e => e.name))
       await update($, formAtom, n => n + 1)
@@ -672,6 +685,8 @@ export const registerSecrets = (on: On, options: SecretsOptions): void => {
       addScope: root ? await read($, addScopeAtom) : 'global',
       pasted: pasted?.names ?? [],
       pastedFrom: pasted?.from ?? null,
+      open: await read($, openAtom),
+      forms: await read($, formsAtom),
       trackedForAll: M.allowTrackedWrites,
     }, handlers($))
   })

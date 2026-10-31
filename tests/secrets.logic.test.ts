@@ -488,6 +488,28 @@ describe('secrets: Claude importing a .env file', () => {
     expect(store.global.B!.source).toBeUndefined()
     expect(sourceLabel(store.global.A!.source)).toBe('imported by Claude from .secrets/.env · 2026-10-31')
   })
+
+  test('every source kind round-trips the store and gets its label; an entry without one is unknown', () => {
+    const at = Date.UTC(2026, 9, 31)
+    const store = parseVaultStore({
+      global: {
+        I: { value: 'x', allow: [], source: { kind: 'import', path: 'C:/proj/.env', at } },
+        P: { value: 'x', allow: [], source: { kind: 'pasted', at } },
+        D: { value: 'x', allow: [], source: { kind: 'added', at } },
+        O: { value: 'x', allow: [] },
+        N: { value: 'x', allow: [], source: { kind: 'import', at } },
+        T: { value: 'x', allow: [], source: { kind: 'added', at: 'today' } },
+      },
+      projects: {},
+    })
+    expect(sourceLabel(store.global.I!.source)).toBe('imported from C:/proj/.env · 2026-10-31')
+    expect(sourceLabel(store.global.P!.source)).toBe('pasted · auto-vaulted · 2026-10-31')
+    expect(sourceLabel(store.global.D!.source)).toBe('added in pane · 2026-10-31')
+    expect(sourceLabel(store.global.O!.source)).toBe('source unknown')
+    // A malformed source (an import without its path, a time that is not a number) is dropped, not trusted.
+    expect(store.global.N!.source).toBeUndefined()
+    expect(store.global.T!.source).toBeUndefined()
+  })
 })
 
 describe('secrets: what the person types (#42)', () => {

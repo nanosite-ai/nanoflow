@@ -4,7 +4,7 @@
 import type { NfActivity, NfCheck, NfSnapshot, NfSource, NfTab, NfTicket, NfWorktree } from '../types'
 import { truncate } from './diff'
 import { stagesOf, type StageState } from './progress'
-import { Badge, COLOR, LinkOr, type Look, Mark, type PaneElements, Row, StatusBadge, TicketLink } from './ui'
+import { Badge, COLOR, Fold, LinkOr, type Look, Mark, type PaneElements, Row, StatusBadge, TicketLink } from './ui'
 
 export { COLOR, statusColor, type PaneElements } from './ui'
 
@@ -140,7 +140,7 @@ const WorktreeCard = (el: PaneElements, data: PaneData, on: PaneHandlers, wt: Nf
     <Box key={k('card')} flexDirection="column" {...frame}>
       {Row(el, k('head'), [
         wt.isCurrent && Badge(el, k('here'), '📍 THIS SESSION', COLOR.current),
-        <Button key={k('select')} plain label={`${isSelected ? '▾' : '▸'} ${icon} ${wt.name}`} onPress={() => on.select(isSelected ? null : wt.path)} />,
+        Fold(el, k('select'), isSelected, `${icon} ${wt.name}`, () => on.select(isSelected ? null : wt.path)),
         !wt.isCurrent && <Button key={k('session')} plain label="🖥️ session" onPress={() => on.openSession(wt)} />,
         wt.ticket && TicketLink(el, k('ticket'), wt.ticket),
         title && <Text key={k('title')} bold color={wt.isCurrent ? COLOR.current : undefined}>{title}</Text>,
@@ -265,7 +265,7 @@ const ActivityTab = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
               <Text key={`${k}-at`} dimColor>{clock(a.at)}</Text>,
               <Text key={`${k}-text`} color={TONE[a.tone]}>{`${a.icon} ${truncate(a.text, width)}`}</Text>,
               a.href && <Link key={`${k}-href`} href={a.href} label="↗" />,
-              a.detail && <Button key={`${k}-output`} plain label={isOpen ? '▾ output' : '▸ output'} onPress={() => on.toggleOutput(a.at)} />,
+              a.detail && Fold(el, `${k}-output`, isOpen, 'output', () => on.toggleOutput(a.at)),
             ], { wrap: false })}
             {isOpen && (
               <Box key={`${k}-detail`} flexDirection="column" borderStyle="single" borderColor={COLOR.muted} paddingX={1}>
