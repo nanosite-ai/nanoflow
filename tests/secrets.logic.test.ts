@@ -444,6 +444,31 @@ describe('secrets: .env, prompt section, status line', () => {
     ])
   })
 
+  test('a quoted value followed by a # comment keeps only what is inside the quotes (#34 review)', () => {
+    const v = 'v-' + fake(2)
+    const pem = FAKES['private-key']!
+    const text = [
+      `DOUBLE="${v}" # a comment`,
+      `SINGLE='${v}'   # another one`,
+      `TIGHT="${v}"#no space`,
+      `HASH_INSIDE="${v} # kept"`,
+      `QUOTE_IN_COMMENT="${v}" # say "hi"`,
+      `ESCAPED="a\\" # b" # c`,
+      `KEY_PEM="${pem}" # the deploy key`,
+      `AFTER=${v}`,
+    ].join('\n')
+    expect(parseEnv(text)).toEqual([
+      { name: 'DOUBLE', value: v },
+      { name: 'SINGLE', value: v },
+      { name: 'TIGHT', value: v },
+      { name: 'HASH_INSIDE', value: `${v} # kept` },
+      { name: 'QUOTE_IN_COMMENT', value: v },
+      { name: 'ESCAPED', value: 'a" # b' },
+      { name: 'KEY_PEM', value: pem },
+      { name: 'AFTER', value: v },
+    ])
+  })
+
   test('the system section names secrets, explains allow, escaping and marks, and holds no value', () => {
     const text = sectionText(['API_TOKEN', 'DB_PASSWORD'])
     expect(text).toContain(P('NAME'))

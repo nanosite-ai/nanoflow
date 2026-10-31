@@ -105,10 +105,10 @@ claude plugin marketplace add nanosite-ai/claude-plugins
 claude plugin install nanoflow@nanosite --scope user
 ```
 
-Or inside Claude Code: `/plugin marketplace add nanosite-ai/claude-plugins`, then `/plugin install nanoflow@nanosite`.
+Or inside Claude Code: `/plugin marketplace add nanosite-ai/claude-plugins`, then `/plugin install nanoflow@nanosite --scope user`.
 
-> **Legacy id:** this repo is still its own `nanoflow` marketplace, so existing `nanoflow@nanoflow` installs keep
-> working and updating. To move to the catalog: add it as above, `/plugin install nanoflow@nanosite`, then
+> **Legacy ID:** this repo is still its own `nanoflow` marketplace, so existing `nanoflow@nanoflow` installs keep
+> working and updating. To move to the catalog: add it as above, `/plugin install nanoflow@nanosite --scope user`, then
 > `/plugin uninstall nanoflow@nanoflow`.
 
 Install it at **user** scope so the dashboard opens in every repo. A project-scoped install only loads in the repo you

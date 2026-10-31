@@ -21,7 +21,7 @@ run, with toasts and a progress status line:
 
 ```
 /plugin marketplace add nanosite-ai/claude-plugins
-/plugin install nanoflow@nanosite
+/plugin install nanoflow@nanosite --scope user
 ```
 
 Docs, configuration and the full command reference: **https://github.com/nanosite-ai/nanoflow**
