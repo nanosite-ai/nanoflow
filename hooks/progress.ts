@@ -46,11 +46,13 @@ export const statusLine = (args: {
   checks: Readonly<Record<string, NfCheck>>
   running: string | null
   skill: string | null
+  /** How many secrets the vault holds; 0 or absent shows nothing. */
+  secrets?: number
 }): string => {
-  const { snapshot, checks, running, skill } = args
+  const { snapshot, checks, running, skill, secrets = 0 } = args
   if (!snapshot) return 'nanoflow · scanning…'
   const wt = currentWorktree(snapshot)
-  const extras = [running ? `⏳ ${running}` : '', skill ? `📘 ${skill}` : ''].filter(Boolean).join(' · ')
+  const extras = [running ? `⏳ ${running}` : '', skill ? `📘 ${skill}` : '', secrets ? `🔐 ${secrets}` : ''].filter(Boolean).join(' · ')
   const tail = ` │ ${fleetLine(snapshot)}${extras ? ` │ ${extras}` : ''}`
   if (!wt || wt.isMain) return `${wt?.branch ?? 'main'}${tail}`
   const head = wt.ticket ? `${ticketLabel(wt.ticket)}${wt.ticket.title ? ` ${truncate(wt.ticket.title, 28)}` : ''}` : wt.name

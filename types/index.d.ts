@@ -55,6 +55,12 @@ export type NfTab = 'worktrees' | 'tickets' | 'activity'
 
 export type NfSource = { config: string; provider: string | null; error: string | null }
 
+/** A vault entry as the Secrets pane draws it: its name and length only, never its value. */
+export type NfSecret = { name: string; length: number }
+
+/** The Secrets pane's line of feedback (saved, imported, refused). Never holds a value. */
+export type NfSecretsNote = { text: string; tone: NfTone }
+
 declare module 'claude-code' {
   interface PluginState {
     nanoflow: {
@@ -71,6 +77,19 @@ declare module 'claude-code' {
       source: NfSource
       /** The worktree this session works in, from the paths its tool calls name; null until one does. */
       focus: string | null
+      /** The vault's names and value lengths (values stay in $.store). */
+      secrets: NfSecret[]
+      /** The secret whose value the pane shows for a few seconds, and when that began. */
+      secretsReveal: { name: string; at: number } | null
+      /** The secret a Delete waits to be confirmed for. */
+      secretsConfirm: string | null
+      /** The secret being renamed. */
+      secretsRename: string | null
+      secretsNote: NfSecretsNote | null
+      /** Bumped after a save so the add form's fields are drawn empty. */
+      secretsForm: number
+      /** The add form's name, typed so far. */
+      secretsDraft: string
     }
   }
 }

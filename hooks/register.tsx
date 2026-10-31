@@ -12,6 +12,7 @@ import {
   featureOf, slugFromRemote, ticketKeyOf, ticketNumber, ticketUrl, withFocus, type GitWorktree, type GqlRepo,
 } from './scan'
 import { PaneView, type PaneHandlers } from './view'
+import { registerSecrets, secretCount, startSecrets } from './secrets/register'
 
 type $ = EngineInterface
 
@@ -206,6 +207,7 @@ const refreshStatus = async ($: $): Promise<void> => {
     checks: await read($, checksAtom),
     running: S.running,
     skill: await read($, skillAtom),
+    secrets: await secretCount($),
   }))
 }
 
@@ -433,11 +435,15 @@ export const register: Register = (on, options) => {
   S.toastLevel = typeof options.toasts === 'string' ? options.toasts : 'all'
   const openPaneOnStart = options.openPaneOnStart !== false
 
+  // Secrets: the vault, the /secrets pane, and the hooks that keep every value out of the model's sight.
+  registerSecrets(on)
+
   // ─── session ─────────────────────────────────────────────────────────────────────────────────────
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     S.cwd = e.cwd
+    await startSecrets($, e.cwd)
     await $.command.register({
       name: COMMAND,
       description: 'nanoflow by nanosite.ai: worktrees, tickets, PRs/CI, activity',
