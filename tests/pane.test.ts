@@ -159,3 +159,62 @@ describe('dashboard pane', () => {
     expect(opened).toEqual(['nanoflow'])
   })
 })
+
+describe('dashboard pane: teardown', () => {
+  const asked: string[] = []
+  /** The person answers every question Yes; records each. */
+  const answerYes = (on: Parameters<Parameters<typeof test>[1]>[1]) =>
+    on('tool.call', { tool: 'AskUserQuestion' }, (_$, e) => {
+      const questions = (e as unknown as { questions: Array<{ question: string }> }).questions
+      asked.push(...questions.map(q => q.question))
+      return { result: { questions, answers: Object.fromEntries(questions.map(q => [q.question, 'Yes'])) } }
+    })
+
+  const seed = (on: Parameters<Parameters<typeof test>[1]>[1], worktrees: NfWorktree[]) => {
+    const snapshot: NfSnapshot = { version: 1, generatedAt: '2026-10-07T10:00:00Z', mainRoot: 'C:/dev/repo', current: null, worktrees, board: null }
+    on('state.get', ($, e, next) => (e.plugin === 'nanoflow' && e.key === 'snapshot' ? { value: { version: 1, value: snapshot } } : next(e)))
+    const runs: string[][] = []
+    on('process.run', async (_$, e) => {
+      runs.push([...e.argv])
+      return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    })
+    return runs
+  }
+
+  test('a ticket Done on the board offers 🧹 Teardown on the card title; an open PR does not', async ($, on) => {
+    mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
+    mock.env(on, {})
+    asked.length = 0
+    answerYes(on)
+    const done = tree('repo-7-dark-mode', 'Done')
+    const open = { ...tree('repo-8-search', 'Done'), pr: { number: 9, url: 'https://gh/pr/9', state: 'OPEN', ci: 'pass', ciUrl: null } } as NfWorktree
+    const runs = seed(on, [done, open])
+    const ui = await $.ui.mount({ plugin: 'nanoflow', surface: 'terminal', ...PANE })
+    expect(await ui.find({ key: `teardown-head-${open.path}` })).toBeUndefined()
+    await ui.press({ key: `teardown-head-${done.path}` })
+    expect(asked).toEqual(['Teardown repo-7-dark-mode?'])
+    expect(runs).toContainEqual(['git', 'worktree', 'remove', done.path])
+    // Expanded, the card shows it in its actions row instead of on the title.
+    await ui.press({ key: `select-${done.path}` })
+    expect(await ui.find({ key: `teardown-head-${done.path}` })).toBeUndefined()
+    expect(await ui.find({ key: `teardown-${done.path}` })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('the fleet line tears down every done worktree after one question', async ($, on) => {
+    mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
+    mock.env(on, {})
+    asked.length = 0
+    answerYes(on)
+    const merged = { ...tree('repo-7-dark-mode', 'In review'), pr: { number: 9, url: 'https://gh/pr/9', state: 'MERGED', ci: 'pass', ciUrl: null } } as NfWorktree
+    const closed = { ...tree('repo-8-search', null), ticket: { ...tree('x', null).ticket!, state: 'CLOSED' } } as NfWorktree
+    const busy = tree('repo-9-busy', 'In progress')
+    const runs = seed(on, [merged, closed, busy])
+    const ui = await $.ui.mount({ plugin: 'nanoflow', surface: 'terminal', ...PANE })
+    await ui.press({ key: 'fleet-teardown' })
+    expect(asked).toEqual(['Teardown 2 done: repo-7-dark-mode, repo-8-search?'])
+    const removed = runs.filter(argv => argv.slice(0, 3).join(' ') === 'git worktree remove').map(argv => argv[3])
+    expect(removed).toEqual([merged.path, closed.path])
+    await ui.unmount()
+  })
+})
