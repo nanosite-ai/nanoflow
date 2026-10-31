@@ -16,13 +16,18 @@ easily. Claude knows the names, never the values, and writes a placeholder where
 **`/secrets`** opens the Secrets pane. It shows **This project** (the git repository's main checkout, shared
 by its worktrees; the folder itself outside git) and **All projects**, then the add and import forms.
 
-**One line per secret**: its name, where it came from, its length (never a part of the value) and a compact
-policy badge:
+**A slim card per secret**: one line with its name, where it came from, its length (never a part of the
+value) and a compact policy badge:
 
 ```
-▸ 🔐 PLATFORM_JWT_SECRET  imported by Claude from .secrets/.env · 2026-10-31  64 chars  🔒 nowhere
-▸ 🔐 STRIPE_KEY           added in pane · 2026-10-30  32 chars  ✓ curl, api.stripe.com +1  📄 files
-▸ 🔐 PASTED_1             pasted · auto-vaulted · 2026-10-31  40 chars  ⚠ changed  🔒 nowhere
+╭─
+│ ▸ 🔐 PLATFORM_JWT_SECRET  imported by Claude from .secrets/.env · 2026-10-31  64 chars  🔒 nowhere
+╰─
+╭─
+│ ▾ 🔐 STRIPE_KEY  added in pane · 2026-10-30  32 chars  ✓ curl, api.stripe.com +1  📄 files
+│ [📋 Copy] [👁 Reveal] [✏️ Rename] [🗑 Delete]
+│ ▸ ⚙ Options
+╰─
 ```
 
 | Badge | Means |
@@ -37,25 +42,25 @@ policy badge:
 each with its date. A secret stored before nanoflow kept this says *source unknown*.
 
 **What needs a look is summed up once, at the top**: *⚠ 2 secrets are allowed nowhere · 1 policy changed
-outside the pane*, with **[ review ]** to open the first one. Rows carry only the badge; the explanation is in
-the details.
+outside the pane*, with **[ review ]** to open the first one with its options. Rows carry only the badge; the explanation is in
+the card's options.
 
-**Press a name to open its details** (one at a time; press again to close):
+**Press a name to open its card** (one at a time; press again to close). An open card shows **📋 Copy** ·
+**👁 Reveal** (10 s) · **✏️ Rename** · **🗑 Delete** (asks first), and *⚠ Changed outside this pane* with
+**accept** (puts the store's wider policy in force) and **undo** (writes your policy back) when that
+happened. What the secret may be used with stays folded under **▸ ⚙ Options** until you press it:
 
-| In the details | What it does |
+| Under ⚙ Options | What it does |
 |---|---|
-| Scope and source | *📁 This project* or *🌐 All projects*, and where it came from. |
 | **Allow** | The commands and hosts this secret may be used with, e.g. `kubectl, npm, api.example.com`; each allowed item has a ✕ to remove it. **A new secret is allowed nowhere**, and the details say so until you allow something. Shells, interpreters and wrappers (`sh`, `bash`, `pwsh`, `cmd`, `node`, `python`, `env`, `xargs`, `sudo`, `iex`…) can never be allowed: they would run anything. |
-| **⚠ Changed outside this pane** | **accept** puts the store's wider policy in force; **undo** writes your policy back. |
 | **📄 Files** | Off by default: the secret is never written into a file. Turn it on to let a Write or Edit fill it into git-ignored files (such as `.env`). |
 | **📝 Tracked files** | Shown once Files is on. Off by default: the secret is written only into git-ignored files. Turn it on to allow writing it into files git tracks. |
-| **📋 Copy** · **👁 Reveal** (10 s) · **✏️ Rename** · **🗑 Delete** (asks first) | The secret's actions. |
 
 **The forms come after the list, folded** (open on an empty vault):
 
 | Form | What it does |
 |---|---|
-| **▸ ➕ Add a secret** | Pick *This project* or *All projects*, type a name (`STRIPE_SECRET_KEY`), then the value and Enter. Both fields clear after a save, and the saved secret opens so you can allow it. If you paste a token into the Name field, it is refused and never kept. |
+| **▸ ➕ Add a secret** | Pick *This project* or *All projects*, type a name (`STRIPE_SECRET_KEY`), then the value and Enter. Both fields clear after a save, and the saved secret's card opens; allow its uses under ⚙ Options. If you paste a token into the Name field, it is refused and never kept. |
 | **▸ 📥 Import a .env file** | Takes a path (absolute, `~/…`, or relative to the session's folder) and saves where *Add* is set to. Every `KEY=VALUE` is stored, including multi-line quoted values such as PEM keys. Only the names are shown. |
 
 **↩ Undo** shows at the top after a prompt stored a secret on its own, or after Claude imported a file;

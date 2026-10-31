@@ -99,6 +99,7 @@ const addScopeAtom = atom({ plugin: 'nanoflow', key: 'secretsAddScope' } as cons
 const pastedAtom = atom({ plugin: 'nanoflow', key: 'secretsPasted' } as const, null)
 const trustedAtom = atom({ plugin: 'nanoflow', key: 'secretsTrusted' } as const, null)
 const openAtom = atom({ plugin: 'nanoflow', key: 'secretsOpen' } as const, null)
+const optionsAtom = atom({ plugin: 'nanoflow', key: 'secretsOptions' } as const, null)
 const formsAtom = atom({ plugin: 'nanoflow', key: 'secretsForms' } as const, null)
 
 /**
@@ -422,7 +423,13 @@ const handlers = ($: $): SecretsHandlers => ({
     })()
   },
   hide: () => void update($, revealAtom, () => null),
-  setOpen: id => void update($, openAtom, () => id),
+  setOpen: (id, options) => {
+    void (async () => {
+      await update($, openAtom, () => id)
+      await update($, optionsAtom, () => (options && id ? id : null))
+    })()
+  },
+  setOptions: id => void update($, optionsAtom, () => id),
   toggleForm: (form, shown) => void update($, formsAtom, () => (shown === form ? 'none' : form)),
   askDelete: id => void update($, confirmAtom, () => id),
   cancel: () => void update($, confirmAtom, () => null),
@@ -435,6 +442,7 @@ const handlers = ($: $): SecretsHandlers => ({
       })
       await update($, confirmAtom, () => null)
       await update($, openAtom, open => (open === id ? null : open))
+      await update($, optionsAtom, open => (open === id ? null : open))
       await update($, revealAtom, shown => (shown?.id === id ? null : shown))
       await note($, `🗑 Deleted ${name}`, 'success')
     })()
@@ -460,6 +468,7 @@ const handlers = ($: $): SecretsHandlers => ({
       })
       await update($, renameAtom, () => null)
       await update($, openAtom, open => (open === id ? idOf(scope, name) : open))
+      await update($, optionsAtom, open => (open === id ? idOf(scope, name) : open))
       await note($, `✏️ Renamed ${from} to ${name}`, 'success')
     })()
   },
@@ -522,7 +531,7 @@ const handlers = ($: $): SecretsHandlers => ({
       await update($, openAtom, () => savedId)
       await update($, draftAtom, () => '')
       await update($, formAtom, n => n + 1)
-      await note($, `🔐 Saved ${checked.name}. Allow the commands or hosts it is for, below its name.`, 'success')
+      await note($, `🔐 Saved ${checked.name}. Allow the commands or hosts it is for under ⚙ Options.`, 'success')
     })()
   },
   setAddScope: scope => void update($, addScopeAtom, () => scope),
@@ -686,6 +695,7 @@ export const registerSecrets = (on: On, options: SecretsOptions): void => {
       pasted: pasted?.names ?? [],
       pastedFrom: pasted?.from ?? null,
       open: await read($, openAtom),
+      options: await read($, optionsAtom),
       forms: await read($, formsAtom),
       trackedForAll: M.allowTrackedWrites,
     }, handlers($))

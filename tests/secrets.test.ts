@@ -530,8 +530,13 @@ describe('secrets: the /secrets pane', () => {
       expect(await ui.find({ text: value })).toBeUndefined()
       expect(await ui.find({ key: valueKey })).toBeUndefined()
 
-      // Nothing is allowed until the user says so, and the pane says it. The saved secret opens on its own.
+      // Nothing is allowed until the user says so: the badge says it; the card opens on its own, its
+      // ⚙ Options (what it may be used with, the file switches) stay folded until pressed.
       expect(await ui.find({ type: 'Text', text: '🔒 nowhere' })).toBeDefined()
+      expect(await ui.find({ key: 'secret-copy-g-API_TOKEN' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /Not allowed anywhere yet/ })).toBeUndefined()
+      expect(await ui.find({ type: 'Input', key: `secret-allow-g-API_TOKEN-${0}` })).toBeUndefined()
+      await ui.press({ key: 'secret-options-g-API_TOKEN' })
       expect(await ui.find({ type: 'Text', text: /Not allowed anywhere yet/ })).toBeDefined()
       await ui.input({ key: await inputKey(ui, 'secret-allow-g-API_TOKEN-'), text: 'kubectl, https://api.example.com/v1' })
       expect(store.vault().global.API_TOKEN!.allow).toEqual(['kubectl', 'api.example.com'])
@@ -657,7 +662,7 @@ describe('secrets: the /secrets pane', () => {
     await ui.unmount()
   })
 
-  test('rows are one line with source and a policy badge; details open on press; warnings are summed up once at the top', async ($, on) => {
+  test('a slim card per secret: one line with source and a policy badge; actions on open, policy under ⚙ Options; warnings summed up once at the top', async ($, on) => {
     const at = Date.UTC(2026, 9, 31)
     memStore(on, {
       [VAULT_KEY]: vaultOf({
@@ -682,14 +687,20 @@ describe('secrets: the /secrets pane', () => {
     expect(await ui.find({ type: 'Text', text: /Not allowed anywhere yet/ })).toBeUndefined()
     expect(await ui.find({ key: 'secret-copy-g-STRIPE_KEY' })).toBeUndefined()
     // Review opens the first one that needs a look; a press on another row moves the details there.
+    // Review opens the first one that needs a look with its ⚙ Options, where the fix is.
     await ui.press({ key: 'secret-review' })
     expect(await ui.find({ key: 'secret-copy-g-OLD_KEY' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /Not allowed anywhere yet/ })).toBeDefined()
     expect(await ui.find({ key: 'secret-review' })).toBeUndefined()
+    // Another card opens with its options folded: actions only, until ⚙ Options is pressed.
     await ui.press({ key: 'secret-open-g-STRIPE_KEY' })
     expect(await ui.find({ key: 'secret-copy-g-OLD_KEY' })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: '🌐 All projects · added in pane · 2026-10-31' })).toBeDefined()
+    expect(await ui.find({ key: 'secret-copy-g-STRIPE_KEY' })).toBeDefined()
+    expect(await ui.find({ key: 'secret-unallow-g-STRIPE_KEY-stripe' })).toBeUndefined()
+    await ui.press({ key: 'secret-options-g-STRIPE_KEY' })
     expect(await ui.find({ key: 'secret-unallow-g-STRIPE_KEY-stripe' })).toBeDefined()
+    await ui.press({ key: 'secret-options-g-STRIPE_KEY' })
+    expect(await ui.find({ key: 'secret-unallow-g-STRIPE_KEY-stripe' })).toBeUndefined()
     await ui.press({ key: 'secret-open-g-STRIPE_KEY' })
     expect(await ui.find({ key: 'secret-copy-g-STRIPE_KEY' })).toBeUndefined()
     // The forms come after the list, folded; each opens and closes.

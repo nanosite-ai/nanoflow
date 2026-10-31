@@ -1,7 +1,7 @@
-// The Secrets pane: this project's secrets and the ones for all projects, one line each (name, where it came
-// from, length, a compact policy badge), the open one's details below it (what it may be used with, the
-// file switches, Copy / Reveal / Rename / Delete), one summary line for what needs attention, then the add
-// and import forms, folded until wanted. Pure: every handler is passed in. What it draws is the person's
+// The Secrets pane: this project's secrets and the ones for all projects, a slim card each (name, where it
+// came from, length, a compact policy badge); an open card shows Copy / Reveal / Rename / Delete and folds
+// what the secret may be used with and the file switches under ⚙ Options. One summary line for what needs
+// attention, then the add and import forms, folded until wanted. Pure: every handler is passed in. What it draws is the person's
 // screen alone; none of it reaches the model.
 import type { NfSecret, NfSecretScope, NfSecretsNote } from '../../types'
 import { COLOR, Fold, type Look, Mark, type PaneElements, Row } from '../ui'
@@ -26,8 +26,10 @@ export type SecretsData = {
   pastedFrom: string | null
   /** The user's setting lets every secret be written into tracked files. */
   trackedForAll: boolean
-  /** The secret (by id) whose details are open. */
+  /** The secret (by id) whose card is open. */
   open: string | null
+  /** The open card (by id) whose ⚙ Options are unfolded. */
+  options: string | null
   /** The form the person opened or closed; null until they do (the add form opens on an empty vault). */
   forms: SecretsForm | null
 }
@@ -36,8 +38,10 @@ export type SecretsHandlers = {
   copy: (id: string, surface: string) => void
   reveal: (id: string) => void
   hide: () => void
-  /** Opens one secret's details (null closes them). */
-  setOpen: (id: string | null) => void
+  /** Opens one secret's card (null closes it); `options` unfolds its ⚙ Options too. */
+  setOpen: (id: string | null, options?: boolean) => void
+  /** Unfolds one card's ⚙ Options (null folds them). */
+  setOptions: (id: string | null) => void
   /** Opens a form, or closes it when it is the one shown. */
   toggleForm: (form: 'add' | 'import', shown: SecretsForm) => void
   askDelete: (id: string) => void
@@ -102,12 +106,12 @@ const SummaryBar = (el: PaneElements, data: SecretsData, on: SecretsHandlers) =>
   const first = (changed[0] ?? nowhere[0])!
   return Row(el, 'secret-summary', [
     <Text key="text" color={changed.length ? COLOR.bad : COLOR.wait}>{`⚠ ${parts.join(' · ')}`}</Text>,
-    data.open === first.id ? null : <Button key="secret-review" plain label="[ review ]" onPress={() => on.setOpen(first.id)} />,
+    data.open === first.id && data.options === first.id ? null : <Button key="secret-review" plain label="[ review ]" onPress={() => on.setOpen(first.id, true)} />,
   ])
 }
 
-/** The collapsed row: one line, pressed to open or close its details. */
-const SecretRow = (el: PaneElements, s: NfSecret, data: SecretsData, on: SecretsHandlers) => {
+/** A secret's head line: name, where it came from, length and a policy badge; pressed to open the card. */
+const SecretHead = (el: PaneElements, s: NfSecret, data: SecretsData, on: SecretsHandlers) => {
   const { Text } = el
   const isOpen = data.open === s.id
   return Row(el, `secret-row-${s.id}`, [
@@ -121,14 +125,12 @@ const SecretRow = (el: PaneElements, s: NfSecret, data: SecretsData, on: Secrets
   ])
 }
 
-/** The open secret: where it came from, what it may be used with and written into, and its actions. */
-const SecretDetails = (el: PaneElements, s: NfSecret, data: SecretsData, on: SecretsHandlers) => {
+/** Behind ⚙ Options: what the secret may be used with, and whether it may be written into files. */
+const SecretOptions = (el: PaneElements, s: NfSecret, data: SecretsData, on: SecretsHandlers) => {
   const { Box, Text, Button, Input } = el
   const k = (what: string) => `secret-${what}-${s.id}`
-  const revealed = data.revealed?.id === s.id ? data.revealed.value : null
   return (
-    <Box key={k('details')} flexDirection="column" paddingLeft={2}>
-      <Text key={k('origin')} dimColor>{`${s.scope === 'project' ? '📁 This project' : '🌐 All projects'} · ${s.source}`}</Text>
+    <Box key={k('options-box')} flexDirection="column" paddingLeft={2}>
       {s.allow.length === 0
         ? <Text key={k('nothing-allowed')} color={COLOR.wait}>{'⚠ Not allowed anywhere yet: Claude cannot use it until you allow a command (kubectl) or a host (api.example.com).'}</Text>
         : Row(el, k('allowed'), [
@@ -136,12 +138,6 @@ const SecretDetails = (el: PaneElements, s: NfSecret, data: SecretsData, on: Sec
             ...s.allow.map(item => <Button key={`secret-unallow-${s.id}-${item}`} plain label={`${item} ✕`} onPress={() => on.unallow(s.id, item)} />),
           ])}
       {Input && <Input key={`${k('allow')}-${data.form}`} label="Allow" placeholder="kubectl, npm, api.example.com" submitLabel="allow" onSubmit={text => on.allow(s.id, text)} />}
-      {s.changed.length > 0 &&
-        Row(el, k('changed-row'), [
-          <Text key="changed" color={COLOR.bad}>{`⚠ Changed outside this pane, not in force: ${s.changed.join(', ')}`}</Text>,
-          <Button key={k('accept')} plain label="[ accept ]" onPress={() => on.acceptChange(s.id)} />,
-          <Button key={k('revert')} plain label="[ undo ]" onPress={() => on.revertChange(s.id)} />,
-        ])}
       {Row(el, k('files-row'), [
         <Text key="label" color={s.allowFiles ? COLOR.wait : undefined} dimColor={!s.allowFiles}>
           {s.allowFiles ? '📄 May be written into git-ignored files' : '📄 Never written into files'}
@@ -156,36 +152,67 @@ const SecretDetails = (el: PaneElements, s: NfSecret, data: SecretsData, on: Sec
             </Text>,
             <Button key={k('tracked')} plain label={s.allowTracked ? '[ disallow ]' : '[ allow writing into tracked files ]'} onPress={() => on.toggleTracked(s.id)} />,
           ])}
-      {Row(el, k('actions'), [
-        <Button key={k('copy')} label="📋 Copy" onPress={press => on.copy(s.id, press.surface)} />,
-        revealed === null
-          ? <Button key={k('reveal')} label="👁 Reveal" onPress={() => on.reveal(s.id)} />
-          : <Button key={k('hide')} label="🙈 Hide" onPress={on.hide} />,
-        <Button key={k('rename')} label="✏️ Rename" onPress={() => on.startRename(s.id)} />,
-        <Button key={k('delete')} label="🗑 Delete" onPress={() => on.askDelete(s.id)} />,
-      ])}
-      {revealed !== null && <Text key={k('value')} color={COLOR.wait}>{revealed}</Text>}
-      {data.confirm === s.id &&
-        Row(el, k('confirm-row'), [
-          <Text key="ask" color={COLOR.bad}>{`Delete ${s.name}?`}</Text>,
-          <Button key={k('confirm')} label="Delete" variant="primary" onPress={() => on.confirmDelete(s.id)} />,
-          <Button key={k('cancel')} label="Cancel" onPress={on.cancel} />,
-        ])}
-      {data.renaming === s.id && Input && (
-        <Input key={k('rename-input')} label="New name" placeholder="UPPER_SNAKE_CASE" submitLabel="Rename" autoFocus onSubmit={to => on.rename(s.id, to)} />
-      )}
     </Box>
   )
 }
 
-/** One scope's secrets under its heading: a line each, the open one's details below it. */
+/** The open card's body: its actions, ⚙ Options folded, and what an action asks for (confirm, new name). */
+const SecretBody = (el: PaneElements, s: NfSecret, data: SecretsData, on: SecretsHandlers) => {
+  const { Text, Button, Input } = el
+  const k = (what: string) => `secret-${what}-${s.id}`
+  const revealed = data.revealed?.id === s.id ? data.revealed.value : null
+  const optionsOpen = data.options === s.id
+  return [
+    Row(el, k('actions'), [
+      <Button key={k('copy')} label="📋 Copy" onPress={press => on.copy(s.id, press.surface)} />,
+      revealed === null
+        ? <Button key={k('reveal')} label="👁 Reveal" onPress={() => on.reveal(s.id)} />
+        : <Button key={k('hide')} label="🙈 Hide" onPress={on.hide} />,
+      <Button key={k('rename')} label="✏️ Rename" onPress={() => on.startRename(s.id)} />,
+      <Button key={k('delete')} label="🗑 Delete" onPress={() => on.askDelete(s.id)} />,
+    ]),
+    revealed !== null && <Text key={k('value')} color={COLOR.wait}>{revealed}</Text>,
+    data.confirm === s.id &&
+      Row(el, k('confirm-row'), [
+        <Text key="ask" color={COLOR.bad}>{`Delete ${s.name}?`}</Text>,
+        <Button key={k('confirm')} label="Delete" variant="primary" onPress={() => on.confirmDelete(s.id)} />,
+        <Button key={k('cancel')} label="Cancel" onPress={on.cancel} />,
+      ]),
+    data.renaming === s.id && Input && (
+      <Input key={k('rename-input')} label="New name" placeholder="UPPER_SNAKE_CASE" submitLabel="Rename" autoFocus onSubmit={to => on.rename(s.id, to)} />
+    ),
+    // A policy widened outside the pane is a warning, not an option: it shows whenever the card is open.
+    s.changed.length > 0 &&
+      Row(el, k('changed-row'), [
+        <Text key="changed" color={COLOR.bad}>{`⚠ Changed outside this pane, not in force: ${s.changed.join(', ')}`}</Text>,
+        <Button key={k('accept')} plain label="[ accept ]" onPress={() => on.acceptChange(s.id)} />,
+        <Button key={k('revert')} plain label="[ undo ]" onPress={() => on.revertChange(s.id)} />,
+      ]),
+    Fold(el, k('options'), optionsOpen, '⚙ Options', () => on.setOptions(optionsOpen ? null : s.id)),
+    optionsOpen && SecretOptions(el, s, data, on),
+  ]
+}
+
+/** One secret as a slim card: its head line, and its body while open. */
+const SecretCard = (el: PaneElements, s: NfSecret, data: SecretsData, on: SecretsHandlers) => {
+  const { Box } = el
+  const isOpen = data.open === s.id
+  return (
+    <Box key={`secret-card-${s.id}`} flexDirection="column" borderStyle="round" borderColor={isOpen ? COLOR.selected : COLOR.muted} paddingX={1}>
+      {SecretHead(el, s, data, on)}
+      {isOpen && SecretBody(el, s, data, on)}
+    </Box>
+  )
+}
+
+/** One scope's secrets under its heading, a card each. */
 const SecretList = (el: PaneElements, key: string, title: string, secrets: readonly NfSecret[], data: SecretsData, on: SecretsHandlers) => {
   const { Box, Text } = el
   return (
     <Box key={key} flexDirection="column">
       <Text bold>{secrets.length ? `${title} (${secrets.length})` : title}</Text>
       {secrets.length === 0 && <Text dimColor>None yet.</Text>}
-      {secrets.flatMap(s => [SecretRow(el, s, data, on), data.open === s.id ? SecretDetails(el, s, data, on) : null])}
+      {secrets.map(s => SecretCard(el, s, data, on))}
     </Box>
   )
 }

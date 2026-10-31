@@ -103,8 +103,10 @@ declare module 'claude-code' {
       secretsReveal: { id: string; at: number } | null
       /** The secret (by id) a Delete waits to be confirmed for. */
       secretsConfirm: string | null
-      /** The secret (by id) whose details are open in the pane; one at a time. */
+      /** The secret (by id) whose card is open in the pane; one at a time. */
       secretsOpen: string | null
+      /** The open card (by id) whose ⚙ Options are unfolded. */
+      secretsOptions: string | null
       /** Which of the pane's forms is open: `add`, `import`, `none`; null until the person picks (add, when the vault is empty). */
       secretsForms: 'add' | 'import' | 'none' | null
       /** The secret (by id) being renamed. */
