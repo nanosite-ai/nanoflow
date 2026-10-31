@@ -754,11 +754,12 @@ export const normalizePath = (path: string): string => {
   return `${lead}${parts.join('/')}`.replace(/\/$/, '') || lead
 }
 
-/** Whether `path` lies inside one of the folders `roots` (case-insensitive, as on Windows and macOS). */
+/** Whether `path` lies inside one of the folders `roots`; a Windows drive path is compared ignoring case. */
 export const isInside = (path: string, roots: readonly string[]): boolean => {
-  const p = normalizePath(path).toLowerCase()
+  const fold = (t: string) => (/^[A-Za-z]:\//.test(t) ? t.toLowerCase() : t)
+  const p = fold(normalizePath(path))
   return roots.some(root => {
-    const r = normalizePath(root).toLowerCase()
+    const r = fold(normalizePath(root))
     return r !== '' && p.startsWith(`${r}/`)
   })
 }

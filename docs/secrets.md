@@ -44,13 +44,16 @@ the vault is replaced by its own name. Context-only finds (a `Bearer` header, a 
 git-ignored `.secrets/.env` inside the project, then it calls the `secrets_import` tool with that path.
 nanoflow reads and parses the file itself, and Claude gets back the names and lengths only. The rules:
 
-- The file must be inside the project (the main checkout or the session's worktree) and **not tracked by
-  git**. A tracked file, a path outside the project (a temp folder, `../..`) and a missing file are refused.
+- The file must be inside the project (the main checkout or the session's worktree), where it really lands
+  (a symlink to `~/.aws/credentials` is outside), and **git-ignored**. A tracked or merely untracked file, a
+  path outside the project (a temp folder, `../..`) and a missing file are refused.
 - Imported secrets go to *This project* (or `scope: "global"`), are **allowed nowhere**, and show
   *imported by Claude from .secrets/.env · <date>* in the pane. A toast says so too.
-- A name already in the vault is skipped: Claude never replaces a value you stored.
-- A file under `.secrets/` is deleted once stored (`deleteAfter: false` keeps it). It is kept if some names
-  were skipped, so their values are not lost.
+- A name the session already has (in this project or all projects) is skipped: Claude never replaces or
+  hides a value you stored. A name given twice in the file keeps its last value.
+- Only a file under `.secrets/` is ever deleted, once stored (`deleteAfter: false` keeps it); it is kept if
+  some names were skipped, so their values are not lost. Any other file (your own `.env`) is left alone.
+- Saving your own value under an imported name in the pane makes it yours: the label goes, and undo leaves it.
 - `/secrets undo` (or **↩ Undo** in the pane) removes what the last import stored.
 
 ## When a placeholder is filled in

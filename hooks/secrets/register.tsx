@@ -29,13 +29,13 @@ export const IMPORT_TOOL_ID = `mcp__nanoflow__${IMPORT_TOOL}`
 const IMPORT_SPEC = {
   name: IMPORT_TOOL,
   description:
-    "Imports a .env file (KEY=VALUE lines) into nanoflow's secrets vault without you seeing the values: nanoflow reads the file itself and answers with the names and lengths only. The file must be inside this project and not tracked by git (stage it as .secrets/.env, git-ignored). Imported secrets are allowed nowhere until the user allows them in /secrets; a name already in the vault is skipped. A file under .secrets/ is deleted once stored, unless deleteAfter is false.",
+    "Imports a .env file (KEY=VALUE lines) into nanoflow's secrets vault without you seeing the values: nanoflow reads the file itself and answers with the names and lengths only. The file must be inside this project (stage it as .secrets/.env). Imported secrets are allowed nowhere until the user allows them in /secrets; a name already in the vault is skipped. The file must be git-ignored. A file under .secrets/ is deleted once stored, unless deleteAfter is false; no other file is ever deleted.",
   inputSchema: {
     type: 'object',
     properties: {
       path: { type: 'string', description: 'The .env file, absolute or relative to the working directory, e.g. .secrets/.env' },
       scope: { type: 'string', enum: ['project', 'global'], description: 'project (default): this project only; global: every project' },
-      deleteAfter: { type: 'boolean', description: 'Delete the file once its values are stored (default: true for a file under .secrets/)' },
+      deleteAfter: { type: 'boolean', description: 'false keeps a .secrets/ staging file after import (it is deleted by default); files elsewhere are never deleted' },
     },
     required: ['path'],
     additionalProperties: false,
@@ -300,34 +300,44 @@ async function isIgnored($: $, path: string): Promise<boolean> {
   }
 }
 
-/** Whether git tracks `path`: true, false, or null when it is in no repository. */
-async function isTracked($: $, path: string): Promise<boolean | null> {
-  const { exitCode, stderr } = await $.process.run(['git', 'ls-files', '--error-unmatch', '--', path], { cwd: dirOf(path), timeoutMs: 10_000 })
-  if (exitCode === 0) return true
-  if (exitCode === 128 && /not a git repository/i.test(stderr)) return null
-  return false
+/** What git says about `path`, run in `dir` (a folder that exists): tracked, ignored, neither, in no repository, or unknown. */
+async function gitState($: $, path: string, dir: string): Promise<'tracked' | 'ignored' | 'untracked' | 'no-repo' | 'unknown'> {
+  try {
+    const opts = { cwd: dir, timeoutMs: 10_000 }
+    const tracked = await $.process.run(['git', 'ls-files', '--error-unmatch', '--', path], opts)
+    if (tracked.exitCode === 0) return 'tracked'
+    if (tracked.exitCode === 128 && /not a git repository/i.test(tracked.stderr)) return 'no-repo'
+    if (tracked.exitCode !== 1) return 'unknown'
+    const ignored = await $.process.run(['git', 'check-ignore', '-q', '--no-index', '--', path], opts)
+    return ignored.exitCode === 0 ? 'ignored' : ignored.exitCode === 1 ? 'untracked' : 'unknown'
+  } catch {
+    return 'unknown'
+  }
 }
 
-/** Deletes an untracked or ignored file through git (which never removes a tracked one); whether it is gone. */
-async function deleteUntracked($: $, path: string): Promise<boolean> {
+/** Deletes an ignored file through git (which never removes a tracked one); whether it is gone. */
+async function deleteUntracked($: $, path: string, dir: string): Promise<boolean> {
   try {
-    await $.process.run(['git', 'clean', '-f', '-x', '-q', '--', path], { cwd: dirOf(path), timeoutMs: 10_000 })
+    await $.process.run(['git', 'clean', '-f', '-x', '-q', '--', path], { cwd: dir, timeoutMs: 10_000 })
     return !(await $.fs.exists(path))
   } catch {
     return false
   }
 }
 
-/** The path as the person and the model know it: relative to the session's folder when inside it. */
-const shownPath = (path: string, cwd: string): string => {
-  const base = normalizePath(cwd)
-  return cwd && path.toLowerCase().startsWith(`${base.toLowerCase()}/`) ? path.slice(base.length + 1) : path
+/** Where a path really lands (every link followed), or null when it leads nowhere. */
+async function realPathOf($: $, path: string): Promise<string | null> {
+  const stat = await $.fs.stat(path, { resolve: true }).catch(() => null)
+  return stat?.realPath ? normalizePath(stat.realPath) : null
 }
 
+/** The path as the person and the model know it: relative to the session's folder when inside it. */
+const shownPath = (path: string, cwd: string): string => (cwd && isInside(path, [cwd]) ? path.slice(normalizePath(cwd).length + 1) : path)
+
 /**
- * The secrets_import tool: reads a .env file inside the project that git does not track, stores each value
- * the vault lacks (allowed nowhere), deletes a staging file, and answers with names and lengths. Neither the
- * answer nor a refusal ever holds a value.
+ * The secrets_import tool: reads a git-ignored .env file inside the project (its real path, links followed),
+ * stores each value under a name the session does not have yet (allowed nowhere), deletes a .secrets/ staging
+ * file, and answers with names and lengths. Neither the answer nor a refusal ever holds a value.
  */
 async function importForAgent($: $, input: Readonly<Record<string, unknown>>): Promise<{ result: string } | { deny: string }> {
   const raw = typeof input.path === 'string' ? input.path.trim() : ''
@@ -335,32 +345,43 @@ async function importForAgent($: $, input: Readonly<Record<string, unknown>>): P
   const { root, cwd } = await read($, projectAtom)
   const path = normalizePath(await resolvePath($, raw))
   const shown = shownPath(path, cwd)
-  if (!isInside(path, [root, cwd].filter((r): r is string => Boolean(r)))) {
-    return { deny: `${IMPORT_TOOL} refused: ${shown} is outside this project. Stage the file inside it, as a git-ignored .secrets/.env.` }
-  }
-  if ((await isTracked($, path).catch(() => true)) === true) {
-    return { deny: `${IMPORT_TOOL} refused: git tracks ${shown}, so its values may already be committed. Ask the user to rotate them and import a file git ignores, such as .secrets/.env.` }
-  }
-  const text = await $.fs.read(path).catch(() => null)
+  const outside = { deny: `${IMPORT_TOOL} refused: ${shown} is outside this project. Stage the file inside it, as a git-ignored .secrets/.env.` }
+  const folders = [root, cwd].filter((r): r is string => Boolean(r)).map(normalizePath)
+  if (!isInside(path, folders)) return outside
+  // A link inside the project can point anywhere: what counts is where it lands.
+  const real = await realPathOf($, path)
+  if (real === null) return { deny: `${IMPORT_TOOL}: could not read ${shown}.` }
+  const realFolders = (await Promise.all(folders.map(async f => ({ f, real: await realPathOf($, f) })))).filter(x => x.real !== null && isInside(real, [x.real]))
+  const home = realFolders[0]
+  if (!home) return outside
+  const state = await gitState($, real, home.f)
+  if (state === 'tracked') return { deny: `${IMPORT_TOOL} refused: git tracks ${shown}, so its values may already be committed. Ask the user to rotate them and import a file git ignores, such as .secrets/.env.` }
+  if (state === 'untracked') return { deny: `${IMPORT_TOOL} refused: git does not ignore ${shown}, so the next commit could take it. Add it (or .secrets/) to .gitignore first.` }
+  if (state === 'unknown') return { deny: `${IMPORT_TOOL}: could not ask git whether ${shown} is tracked; try again, or ask the user to import it in /secrets.` }
+  const text = await $.fs.read(real).catch(() => null)
   if (text === null) return { deny: `${IMPORT_TOOL}: could not read ${shown}.` }
-  const entries = parseEnv(text)
+  // A name given twice keeps its last value, as a shell reading the file would.
+  const entries = [...new Map(parseEnv(text).map(e => [e.name, e] as const)).values()]
   if (entries.length === 0) return { deny: `${IMPORT_TOOL}: no KEY=VALUE lines in ${shown}.` }
   const scope: NfSecretScope = input.scope === 'global' || !root ? 'global' : 'project'
   const at = await $.clock.now()
   const imported: typeof entries = []
   const skipped: string[] = []
   await changeStore($, (s, r) => {
+    // Any name this session already resolves is skipped: a project entry would hide an all-projects one.
+    const taken = effectiveEntries(s, r)
     const target = scopeOf(s, scope, r)
     for (const e of entries) {
-      if (target[e.name] !== undefined) skipped.push(e.name)
+      if (taken[e.name] !== undefined || target[e.name] !== undefined) skipped.push(e.name)
       else {
         target[e.name] = { value: e.value, allow: [], source: { kind: 'agent-import', path: shown, at } }
         imported.push(e)
       }
     }
   })
-  const wantDelete = typeof input.deleteAfter === 'boolean' ? input.deleteAfter : isStagingFile(path)
-  const deleted = !wantDelete ? null : skipped.length ? 'kept' : (await deleteUntracked($, path)) ? 'deleted' : 'failed'
+  // Only a staging file under .secrets/ is ever deleted; deleteAfter: false keeps it.
+  const wantDelete = isStagingFile(real) && input.deleteAfter !== false
+  const deleted = !wantDelete ? null : skipped.length ? 'kept' : (await deleteUntracked($, real, home.f)) ? 'deleted' : 'failed'
   const names = imported.map(e => e.name)
   if (names.length) {
     await update($, pastedAtom, () => ({ names, scope, from: shown }))
@@ -482,8 +503,9 @@ const handlers = ($: $): SecretsHandlers => ({
       const scope = await read($, addScopeAtom)
       await changeStore($, (s, r) => {
         const entries = scopeOf(s, scope, r)
-        entries[checked.name] = { ...(entries[checked.name] ?? { allow: [] }), value }
+        entries[checked.name] = { ...withoutSource(entries[checked.name]), value }
       })
+      await forgetImported($, [checked.name])
       await update($, draftAtom, () => '')
       await update($, formAtom, n => n + 1)
       await note($, `🔐 Saved ${checked.name}. Allow the commands or hosts it is for, below its name.`, 'success')
@@ -501,8 +523,9 @@ const handlers = ($: $): SecretsHandlers => ({
       const scope = await read($, addScopeAtom)
       await changeStore($, (s, r) => {
         const target = scopeOf(s, scope, r)
-        for (const e of entries) target[e.name] = { ...(target[e.name] ?? { allow: [] }), value: e.value }
+        for (const e of entries) target[e.name] = { ...withoutSource(target[e.name]), value: e.value }
       })
+      await forgetImported($, entries.map(e => e.name))
       await update($, formAtom, n => n + 1)
       await note($, `📥 Imported ${entries.length} from ${path}: ${entries.map(e => e.name).join(', ')}`, 'success')
     })()
@@ -547,6 +570,21 @@ const handlers = ($: $): SecretsHandlers => ({
     })()
   },
 })
+
+/** An entry's policy without its source: a value the person saves in the pane is theirs. */
+const withoutSource = (entry: Entry | undefined): Omit<Entry, 'value'> => {
+  const { source: _source, value: _value, ...rest } = entry ?? { value: '', allow: [] }
+  return rest
+}
+
+/** Takes names out of the pending undo once the person saved their own value under them. */
+async function forgetImported($: $, names: readonly string[]): Promise<void> {
+  await update($, pastedAtom, p => {
+    if (!p) return p
+    const left = p.names.filter(n => !names.includes(n))
+    return left.length ? { ...p, names: left } : null
+  })
+}
 
 const setFlag = (entry: Entry, flag: 'allowTracked' | 'allowFiles', on: boolean): void => {
   if (on) entry[flag] = true
@@ -620,6 +658,7 @@ export const registerSecrets = (on: On, options: SecretsOptions): void => {
       const { scope, name } = fromId(fresh.id)
       value = scopeOf(parseVaultStore(await $.store.get(VAULT_KEY)), scope, root)[name]?.value
     }
+    const pasted = await read($, pastedAtom)
     return SecretsView(el, {
       secrets: await read($, listAtom),
       root,
@@ -629,8 +668,8 @@ export const registerSecrets = (on: On, options: SecretsOptions): void => {
       note: await read($, noteAtom),
       form: await read($, formAtom),
       addScope: root ? await read($, addScopeAtom) : 'global',
-      pasted: (await read($, pastedAtom))?.names ?? [],
-      pastedFrom: (await read($, pastedAtom))?.from ?? null,
+      pasted: pasted?.names ?? [],
+      pastedFrom: pasted?.from ?? null,
       trackedForAll: M.allowTrackedWrites,
     }, handlers($))
   })

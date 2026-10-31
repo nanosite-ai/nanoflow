@@ -468,6 +468,8 @@ describe('secrets: Claude importing a .env file', () => {
     expect(isInside('C:/proj/.secrets/.env', ['C:/proj'])).toBe(true)
     expect(isInside('c:/PROJ/.env', ['C:/proj/'])).toBe(true)
     expect(isInside('C:/proj-other/.env', ['C:/proj'])).toBe(false)
+    expect(isInside('/home/u/PROJ/.env', ['/home/u/proj'])).toBe(false)
+    expect(isInside('/x/.env', ['/'])).toBe(false)
     expect(isInside('C:/proj/../tmp/.env', ['C:/proj'])).toBe(false)
     expect(isInside('C:/proj', ['C:/proj'])).toBe(false)
     expect(isStagingFile('C:/proj/.secrets/.env')).toBe(true)
