@@ -35,10 +35,21 @@ The status line shows `🔐 <count>` when the vault has entries.
 **Writing the placeholder literally** (docs, templates): escape it with a backslash. `\{{secret:NAME}}` is
 written as `{{secret:NAME}}` and uses no secret.
 
-**If you paste a token into a prompt**, a known token format (see below) is stored as `PASTED_<n>` before
-Claude reads it. A toast says *Stored as PASTED_1 — rename, allow or undo in /secrets*. A value already in
-the vault is replaced by its own name. Context-only finds (a `Bearer` header, a URL password, a
-`PASSWORD=…` line) are masked but not stored.
+**If you paste a secret into a prompt** (or a command's arguments), it is stored as `PASTED_<n>` before
+Claude reads it, and Claude gets `{{secret:PASTED_n}}` in its place. A toast says *Stored as PASTED_1 —
+rename, allow or undo in /secrets*. That covers:
+
+- a known token format (see below);
+- a `Bearer` header, a URL password, Basic auth, or a `PASSWORD=…` line;
+- a bare random value right after a cue word: *"the staging db password is x7Gq…"*, *"use this token …"*,
+  *"api key: …"*. The cue words are password, passphrase, passcode, pass, pw, pwd, token, secret, key, api
+  key and credential, with up to four plain words in between. The value must look random (12+ characters,
+  letters and digits); a git SHA, a UUID, a URL, a path or an ordinary word is left as typed.
+
+A value already in the vault is replaced by its own name. Like any stored secret, a pasted one is allowed
+nowhere until you allow it. Text you paste is part of the prompt, so it is covered the same way; pasted
+images and documents are not text and are not scanned. In what Claude reads from tools, a bare value after a
+cue word is left alone (it may not be yours to store), and context finds are masked but never stored.
 
 **Claude can import a `.env` file for you**, without seeing the values. Ask it to stage the secrets in a
 git-ignored `.secrets/.env` inside the project, then it calls the `secrets_import` tool with that path.

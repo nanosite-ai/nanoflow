@@ -489,3 +489,68 @@ describe('secrets: Claude importing a .env file', () => {
     expect(sourceLabel(store.global.A!.source)).toBe('imported by Claude from .secrets/.env · 2026-10-31')
   })
 })
+
+describe('secrets: what the person types (#42)', () => {
+  const vaulting = () => {
+    const stored: Array<[string, string]> = []
+    return {
+      stored,
+      onUnknown: (value: string, kind: string) => {
+        const name = `PASTED_${stored.length + 1}`
+        stored.push([kind, value])
+        return name
+      },
+    }
+  }
+
+  test('a bare random value after a cue word is vaulted from a prompt, and left alone in tool output', () => {
+    const v = randomFake(20)
+    for (const text of [
+      `the db password is ${v}`,
+      `use this token ${v} for staging`,
+      `api key: ${v}.`,
+      `Password for the staging admin: ${v}`,
+      `my secret ${v}`,
+      `pw ${v}`,
+    ]) {
+      const p = vaulting()
+      const out = redact(text, {}, { person: true, onUnknown: p.onUnknown })
+      expect(out.text).not.toContain(v)
+      expect(out.text).toContain(P('PASTED_1'))
+      expect(p.stored).toEqual([['cue', v]])
+    }
+    // A tool result is not the person's words: a bare value there is left as before.
+    for (const text of [`the db password is ${v}`, `use this token ${v} for staging`]) expect(redact(text, {}).text).toBe(text)
+  })
+
+  test('a SHA, a UUID, a URL, a path, an ordinary word or a placeholder after a cue word is not vaulted', () => {
+    const sha = 'f'.repeat(8) + '0123456789abcdef0123456789abcdef'
+    for (const text of [
+      `the key commit is ${sha}`,
+      `token id 123e4567-e89b-12d3-a456-426614174000`,
+      'password reset link: https://example.com/reset/a1b2c3d4e5f6g7',
+      'the key file is ./certs/server-key-2026.pem',
+      'fix the password reset flow for users',
+      `the token is ${P('API_TOKEN')}`,
+      'my password is hunter2',
+      'token expiry is 3600',
+    ]) {
+      const p = vaulting()
+      expect(redact(text, {}, { person: true, onUnknown: p.onUnknown }).text).toBe(text)
+      expect(p.stored).toEqual([])
+    }
+  })
+
+  test('a context secret in the person’s text is vaulted too; in tool output it is only masked', () => {
+    const t = randomFake(40)
+    const pw = randomFake(16)
+    const v = randomFake(20)
+    const p = vaulting()
+    const out = redact(`curl -H "Authorization: Bearer ${t}" postgres://admin:${pw}@db.example.com/app DB_PASSWORD=${v}`, {}, { person: true, onUnknown: p.onUnknown })
+    expect(out.text).toBe(`curl -H "Authorization: Bearer ${P('PASTED_1')}" postgres://admin:${P('PASTED_2')}@db.example.com/app DB_PASSWORD=${P('PASTED_3')}`)
+    expect(p.stored.map(([kind]) => kind)).toEqual(['bearer', 'url-password', 'value'])
+    const q = vaulting()
+    expect(redact(`Authorization: Bearer ${t}`, {}, { onUnknown: q.onUnknown }).text).toBe('Authorization: Bearer «redacted:bearer»')
+    expect(q.stored).toEqual([])
+  })
+})
