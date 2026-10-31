@@ -200,11 +200,13 @@ export const checkName = (raw: string): { name: string } | { error: string } => 
 
 /**
  * `NAME=value`, `NAME: "value"`, `"apiKey": "value"`: a key that says secret, then a value. Groups: 1 the key
- * with its separator (kept), 2 the quote, 3 the value (masked only when it looks like a real secret).
- * Bounded so a long run of word characters cannot backtrack for long. Never inside a placeholder.
+ * with its separator (kept), 2 the bare key, 3 the quote, 4 the value (masked only when it looks like a real
+ * secret). Bounded so a long run of word characters cannot backtrack for long. Never inside a placeholder.
+ * The value is on the key's line or on an indented next one (YAML, pretty JSON); a next line that starts at
+ * column 0 is not a value, so grep's `path:14:` prefix after `- secretRef:` is left alone (#39).
  */
 const ASSIGNMENT_RE =
-  /(?<!\{\{)(?<![A-Za-z0-9_])([A-Za-z0-9_]{0,40}(?:SECRET|TOKEN|KEY|PASSWORD|PASSWD|PASS|PEPPER|PRIVATE|CREDENTIAL)[A-Za-z0-9_]{0,40}["']?\s*[:=]\s*)(["']?)([^\s"'`,;)}\]]{1,512})\2/gi
+  /(?<!\{\{)(?<![A-Za-z0-9_])(([A-Za-z0-9_]{0,40}(?:SECRET|TOKEN|KEY|PASSWORD|PASSWD|PASS|PEPPER|PRIVATE|CREDENTIAL)[A-Za-z0-9_]{0,40})["']?[ \t]*[:=][ \t]*(?:\r?\n[ \t]+)?)(["']?)([^\s"'`,;)}\]]{1,512})\3/gi
 
 const EXAMPLE_VALUE_RE =
   /^(?:\$|\{\{|«|<.*>$|\[.*\]$|\*+$|\.{3}|x{3,}|(?:your|my|some|insert|enter|replace)[-_]|.*(?:changeme|change_me|example|placeholder|dummy|sample|redacted|todo|fixme|secret_here|key_here))/i
@@ -212,11 +214,13 @@ const WORDY_RE = /^[A-Za-z]+(?:[-_.](?:[A-Za-z]+|\d+|[A-Za-z]{1,2}\d{1,3}))+$/
 
 /**
  * Keys that name something about a secret, not the secret: `KEY_ID`, `apiKeyName`, `tokenUrl`, `keyPath`,
- * `passwordField`, and keys that are lookup keys (`storageKey`, `cacheKey`).
+ * `passwordField`, a reference to one (`secretRef`, `secretKeyRef`), and keys that are lookup keys (`storageKey`, `cacheKey`).
  */
 export const isNotSecretKey = (key: string): boolean =>
   /[_-](?:id|name|field|path|url|uri|file|type|header|param|label|prefix|ttl)$/i.test(key) ||
   /[a-z0-9](?:Id|ID|Name|Field|Path|Url|URL|Uri|File|Type|Header|Param|Label|Prefix|Ttl)$/.test(key) ||
+  // Kubernetes' references to a Secret object by name; `tokenRef` and the like may hold a token.
+  /^secret(?:Key)?Ref$/.test(key) ||
   /(?:storage|cache|sort|primary|foreign|partition|idempotency|query|i18n|translation|row|item|list|map|lookup|hot)[_-]?key$/i.test(key)
 
 /** Whether an assignment's value is a real-looking secret: 12+ characters, random, letters and digits, no example, no URL or path. */
@@ -237,7 +241,7 @@ export const isExampleFile = (path: string): boolean => /\.(?:example|sample|tem
  * (prose, a code comment) passes, and so does any Markdown or plain-text file.
  */
 export const writesMarkAsValue = (text: string, path: string): boolean =>
-  !/\.(?:md|mdx|markdown|txt|rst)$/i.test(path) && new RegExp(`(?:[=:]\\s*["'\`]?|["'])${escapeRe(REDACTED_MARK)}`).test(text)
+  !/\.(?:md|mdx|markdown|txt|rst)$/i.test(path) && new RegExp(`(?:[=:][ \\t]*(?:\\r?\\n[ \\t]+)?["'\`]?|["'])${escapeRe(REDACTED_MARK)}`).test(text)
 
 // ─── forms a vault value travels in ──────────────────────────────────────────────────────────────
 
@@ -378,8 +382,8 @@ export const redact = (text: string, values: Values, options: RedactOptions = {}
     })
   }
   if (!options.skipAssignments) {
-    out = out.replace(ASSIGNMENT_RE, (whole, key: string, quote: string, value: string) => {
-      if (!looksSecret(value) || isNotSecretKey(key.replace(/["']?\s*[:=]\s*$/, ''))) return whole
+    out = out.replace(ASSIGNMENT_RE, (whole, key: string, bareKey: string, quote: string, value: string) => {
+      if (!looksSecret(value) || isNotSecretKey(bareKey)) return whole
       hits.push('value')
       return `${key}${quote}${redactedMark('value')}${quote}`
     })
