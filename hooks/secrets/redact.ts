@@ -558,10 +558,16 @@ export const NEVER_ALLOWED: ReadonlySet<string> = new Set([
   'iex', 'invoke-expression', 'invoke-command', 'icm', 'start-process', 'saps', 'start-job',
 ])
 
-/** Options that send a request through another host, run a command, or read settings from a file. */
-const REFUSED_OPTION_RE = /^--?(?:proxy|socks|preproxy|config|resolve|connect-to|doh-url|execute|input-file|upload-pack|receive-pack|exec)/i
-/** `ProxyCommand=…` and the like (an ssh `-o`, a wget `-e`), and `*_PROXY=` settings. */
-const REFUSED_SETTING_RE = /^(?:\w*proxy\w*|localcommand|permitlocalcommand|remotecommand)=/i
+/**
+ * Options that send a request through another host, run a command, read settings from a file, or build the
+ * URL from something the command does not show (curl's `--variable` / `--expand-*`, and `--next`).
+ */
+const REFUSED_OPTION_RE = /^--?(?:proxy|socks|preproxy|config|resolve|connect-to|doh-url|execute|input-file|upload-pack|receive-pack|exec|variable|expand-|next\b)/i
+/**
+ * `ProxyCommand=…` and the like, in every form ssh takes them (`-oKey=value`, `-o Key=value`, `-o "Key value"`),
+ * a wget `-e` setting, and `*_PROXY=` settings.
+ */
+const REFUSED_SETTING_RE = /^(?:-o)?\s*(?:\w*proxy\w*|localcommand|permitlocalcommand|remotecommand)(?:\s*=|\s)/i
 /** Short options with the same effect, per program (`-x` proxy and `-K` config for curl, `-e`/`-i` for wget…). */
 const REFUSED_SHORT: Readonly<Record<string, string>> = { curl: 'xK', wget: 'ei', git: 'c', ssh: 'FJ', scp: 'FJ', sftp: 'FJ' }
 /** Options whose next word is a local file, per program: that word is not a host. */
@@ -642,17 +648,40 @@ export const disallowedUse = (allow: readonly string[], command: string, shell: 
   for (let i = 0; i < rest.length; i += 1) {
     const word = rest[i]!
     const cluster = /^-([A-Za-z]+)/.exec(word)?.[1] ?? ''
-    if (REFUSED_OPTION_RE.test(word) || REFUSED_SETTING_RE.test(word) || (!word.startsWith('--') && [...cluster].some(c => short.includes(c)))) {
-      return `isn't filled into a command with ${shown(word.split('=')[0]!)}: it can send the request through another host, run a command or read settings from a file`
+    const refused =
+      REFUSED_OPTION_RE.test(word) || REFUSED_SETTING_RE.test(word) || (!word.startsWith('--') && [...cluster].some(c => short.includes(c))) ||
+      // curl: `-:` is `--next`, and `{{name}}` expands a variable (curl 8.3+) into a URL the command does not show.
+      (program === 'curl' && (word === '-:' || word.includes('{{')))
+    if (refused) {
+      return `isn't filled into a command with ${shown(word.split(/[=\s]/)[0]!)}: it can send the request through another host, run a command or read settings from a file`
     }
     if (word.startsWith('@') || (i > 0 && isFileOption(rest[i - 1]!))) continue
-    const option = /^(-[^=]+)=([\s\S]*)$/.exec(word)
+    // `-opt=value`, and PowerShell's `-Param:value` too.
+    const option = (shell === 'powershell' ? /^(-[^=:]+)[=:]([\s\S]*)$/ : /^(-[^=]+)=([\s\S]*)$/).exec(word)
     if (option && isFileOption(option[1]!)) continue
     const host = hostOf(word.startsWith('-') ? (option?.[2] ?? '') : word, program)
     if (host === AMBIGUOUS) return `isn't filled in: ${shown(word)} can be read as more than one host. Write the URL plainly`
     if (host !== null && !hostAllowed(host, hosts)) return `isn't allowed for ${shown(host)}; the user can allow it in /secrets`
   }
   return null
+}
+
+/** The option that makes a program skip its config files (`~/.curlrc`, `~/.wgetrc`), which can add a URL or a proxy. */
+const NO_CONFIG: Readonly<Record<string, string>> = { curl: '-q', wget: '--no-config' }
+
+/**
+ * The command with its program told to read no config file, so a file written earlier cannot send the
+ * request elsewhere: curl gets `-q` as its first argument (where curl requires it), wget `--no-config`.
+ * PowerShell's `curl`/`wget` without `.exe` are Invoke-WebRequest aliases and read no such file.
+ */
+export const withoutConfigFiles = (command: string, shell: 'bash' | 'powershell'): string => {
+  const parsed = commandWords(command, shell)
+  if ('error' in parsed || !parsed.words[0]) return command
+  const [first, second] = parsed.words
+  if (shell === 'powershell' && !/\.exe$/i.test(first!)) return command
+  const flag = NO_CONFIG[programName(first!)]
+  if (!flag || second === flag || (flag === '-q' && second === '--disable')) return command
+  return command.replace(/^(\s*\S+)/, `$1 ${flag}`)
 }
 
 // ─── .env ────────────────────────────────────────────────────────────────────────────────────────

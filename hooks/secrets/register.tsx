@@ -13,7 +13,7 @@ import type { NfSecret, NfSecretScope, NfTone } from '../../types'
 import {
   allValues, checkName, disallowedUse, effectiveEntries, firstProgram, isExampleFile, NEVER_ALLOWED, NO_POLICY, narrowPolicy, nextPastedName, parseAllow,
   parseEnv, parseVaultStore, placeholderNames, policiesOf, policyOf, redact, redactContent, SECTION_ID, sectionText, substitute, trustKey,
-  trustKeyIn, valuesOf, VAULT_KEY, widenedBy, writesMarkAsValue, type Entry, type Policy, type Shell, type VaultStore,
+  trustKeyIn, valuesOf, VAULT_KEY, widenedBy, withoutConfigFiles, writesMarkAsValue, type Entry, type Policy, type Shell, type VaultStore,
 } from './redact'
 import { SecretsView, type SecretsHandlers } from './view'
 
@@ -48,6 +48,24 @@ const touchesSecretsConfig = (tool: string, input: Readonly<Record<string, unkno
   if (paths.some(p => storeRe.test(p))) return true
   if (paths.some(p => /settings(?:\.local)?\.json$/i.test(p)) && (WRITTEN[tool] ?? []).some(f => settingsRe.test(str(f)))) return true
   return false
+}
+
+/** Config files that can send an allowed program's request elsewhere: a URL, a proxy, a remote rewrite, a host alias. */
+const PROGRAM_CONFIG_RE =
+  /(?:^|[\\/\s'"=:])(?:\.curlrc|_curlrc|\.wgetrc|\.netrc|_netrc|\.npmrc|\.gitconfig)\b|\.ssh[\\/]+config\b|\.git[\\/]+config\b|\.config[\\/]+git[\\/]+config\b/i
+/** `git config` setting a key that redirects a remote or runs a command (`url.<x>.insteadOf`, `core.sshCommand`…). */
+const GIT_CONFIG_RE =
+  /\bgit(?:\.exe)?(?:\s+-[Cc]\s+\S+|\s+--(?:git-dir|work-tree)\s+\S+|\s+-\S+)*\s+config\b.*(?:insteadof|sshcommand|proxy|askpass|credential\.|hookspath|alias\.|include)/i
+
+/**
+ * Commands and file writes that change a config file curl, wget, ssh, git or npm read: an earlier write there
+ * could send a later allowed call to another host (filled-in curl and wget also get `-q` / `--no-config`).
+ */
+const touchesProgramConfig = (tool: string, input: Readonly<Record<string, unknown>>): boolean => {
+  const command = typeof input.command === 'string' ? input.command : ''
+  if (command) return PROGRAM_CONFIG_RE.test(command) || GIT_CONFIG_RE.test(command)
+  if (!WRITTEN[tool]) return false
+  return ['file_path', 'notebook_path'].some(field => typeof input[field] === 'string' && PROGRAM_CONFIG_RE.test(input[field]))
 }
 
 const listAtom = atom({ plugin: 'nanoflow', key: 'secrets' } as const, [])
@@ -545,6 +563,9 @@ export const registerSecrets = (on: On, options: SecretsOptions): void => {
     if (touchesSecretsConfig(tool, e as unknown as Record<string, unknown>)) {
       return { deny: `${tool} refused: this reaches nanoflow's secrets store or its settings, where each secret's value and policy are kept. Only the user changes those, in /secrets.` }
     }
+    if (touchesProgramConfig(tool, e as unknown as Record<string, unknown>)) {
+      return { deny: `${tool} refused: this changes or names a config file of curl, wget, ssh, git or npm (.curlrc, .wgetrc, .netrc, .npmrc, .gitconfig, .git/config, .ssh/config), which can send a request that uses a secret to another host. Ask the user to make that change.` }
+    }
     return next(e)
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'nanoflow secrets could not check this call; try again.' }))
 
@@ -599,7 +620,9 @@ export const registerSecrets = (on: On, options: SecretsOptions): void => {
     const filled: Record<string, unknown> = { ...input }
     for (const field of spec.fields) {
       if (typeof input[field] !== 'string') continue
-      const out = substitute(input[field], vault, spec.shell)
+      // A command that gets a value reads no config file (~/.curlrc, ~/.wgetrc could add a URL or a proxy).
+      const source = spec.shell !== 'raw' && used.length > 0 ? withoutConfigFiles(input[field], spec.shell) : input[field]
+      const out = substitute(source, vault, spec.shell)
       if (out.refused) return { deny: `${tool} refused: a secret is filled into one simple command only, and this one has ${out.refused}` }
       filled[field] = out.text
     }
