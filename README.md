@@ -12,7 +12,7 @@ Run many tasks at once with Claude Code, each in its own git worktree on its own
 them at a glance: which ticket, which branch, which PR, whether CI is red, what's running, what's ready to
 tear down.
 
-[Install](#-install) · [What you get](#-what-you-get) · [The CLI](#-the-cli-fewer-tokens-fewer-mistakes) · [Config](docs/config.md) · [CLI reference](docs/cli.md)
+[Install](#-install) · [What you get](#-what-you-get) · [The CLI](#-the-cli-fewer-tokens-fewer-mistakes) · [Config](docs/config.md) · [CLI reference](docs/cli.md) · [Secrets](docs/secrets.md)
 
 </div>
 
@@ -68,6 +68,20 @@ closed · CI turned green or red · ticket closed · tests, typecheck, lint, e2e
 test turned green** (your bug repro now passes) · a skill loaded · the Playwright browser opened, saved a
 screenshot, closed · and after a merge: *"Tear down app-712-site-offline? Close the browser and delete your
 screenshots too."*
+
+### 🔐 Secrets Claude uses without seeing
+
+Type `/secrets` to open the Secrets pane. There you can add a secret for this project or for all projects,
+import a `.env` file, and copy, reveal (for 10 seconds), rename or delete one. Claude sees only the names.
+It writes `{{secret:STRIPE_SECRET_KEY}}` in a Bash or PowerShell command, and the value is filled in, quoted for
+the shell, **only in one simple command, for the commands and hosts you allowed for that secret**. A new
+secret is allowed nowhere, and only you change that, in the pane. Values go into files only when you allow
+it for that secret (git-ignored files; tracked ones need a second switch). A value
+that comes back in output, from any tool or subagent, reaches Claude as the placeholder again. Common
+token formats are masked even when they're not in the vault, and a token you paste into a prompt is
+stored as `PASTED_1` first.
+This guards against accidental exposure, not against a deliberately hostile agent. What it covers and what
+it doesn't: [docs/secrets.md](docs/secrets.md).
 
 ### Dev skills
 

@@ -55,6 +55,28 @@ export type NfTab = 'worktrees' | 'tickets' | 'activity'
 
 export type NfSource = { config: string; provider: string | null; error: string | null }
 
+export type NfSecretScope = 'project' | 'global'
+
+/** A vault entry as the Secrets pane draws it: never its value. `id` is `<p|g>-<NAME>`. */
+export type NfSecret = {
+  id: string
+  name: string
+  scope: NfSecretScope
+  length: number
+  allow: string[]
+  /** Whether it may be written into a file git tracks (the user's choice, off by default). */
+  allowTracked: boolean
+  /** Whether it may be written into files at all (git-ignored ones; the user's choice, off by default). */
+  allowFiles: boolean
+  /** What the store allows beyond what the user set in the pane (changed elsewhere, not in force). */
+  changed: string[]
+}
+
+/** What the user allowed a secret for, in the pane. */
+export type NfSecretPolicy = { allow: string[]; allowTracked: boolean; allowFiles: boolean }
+
+export type NfSecretsNote = { text: string; tone: NfTone }
+
 declare module 'claude-code' {
   interface PluginState {
     nanoflow: {
@@ -71,6 +93,31 @@ declare module 'claude-code' {
       source: NfSource
       /** The worktree this session works in, from the paths its tool calls name; null until one does. */
       focus: string | null
+      /** The vault's entries in reach of this session (names, lengths, allowed uses; values stay in $.store). */
+      secrets: NfSecret[]
+      /** Where this session's project secrets live: its git root (or folder), and the session's folder. */
+      secretsProject: { root: string | null; cwd: string }
+      /** The secret whose value the pane shows for a few seconds (by id), and when that began. */
+      secretsReveal: { id: string; at: number } | null
+      /** The secret (by id) a Delete waits to be confirmed for. */
+      secretsConfirm: string | null
+      /** The secret (by id) being renamed. */
+      secretsRename: string | null
+      secretsNote: NfSecretsNote | null
+      /** Bumped after a save so the form's fields are drawn empty. */
+      secretsForm: number
+      /** The add form's name, typed so far (never a value: one that looks like a token is not kept). */
+      secretsDraft: string
+      /** Where the add form saves. */
+      secretsAddScope: NfSecretScope
+      /** The secrets the last prompt stored on its own, for Undo. */
+      secretsPasted: { names: string[]; scope: NfSecretScope } | null
+      /**
+       * Each secret's policy as the user last set it in the pane (by scope, project and name), or null until the
+       * store is first read. Held by the host for the session: no tool call can write it, so a wider policy
+       * in the store file is not used until the user accepts it in the pane.
+       */
+      secretsTrusted: Record<string, NfSecretPolicy> | null
     }
   }
 }

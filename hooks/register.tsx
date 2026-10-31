@@ -12,6 +12,7 @@ import {
   featureOf, slugFromRemote, ticketKeyOf, ticketNumber, ticketUrl, withFocus, type GitWorktree, type GqlRepo,
 } from './scan'
 import { PaneView, type PaneHandlers } from './view'
+import { registerSecrets, secretCount, startSecrets } from './secrets/register'
 
 type $ = EngineInterface
 
@@ -206,6 +207,7 @@ const refreshStatus = async ($: $): Promise<void> => {
     checks: await read($, checksAtom),
     running: S.running,
     skill: await read($, skillAtom),
+    secrets: await secretCount($),
   }))
 }
 
@@ -438,6 +440,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     S.cwd = e.cwd
+    await startSecrets($, e.cwd)
     await $.command.register({
       name: COMMAND,
       description: 'nanoflow by nanosite.ai: worktrees, tickets, PRs/CI, activity',
@@ -619,4 +622,10 @@ export const register: Register = (on, options) => {
       version: S.version,
     }, handlers($))
   })
+
+  // ─── secrets ─────────────────────────────────────────────────────────────────────────────────────
+
+  // Registered LAST: hooks nest first-outermost, so the secrets tool.call hook is the innermost of nanoflow's
+  // and every hook above (the activity feed, toasts, the rules) sees the placeholder, never the value.
+  registerSecrets(on, { allowTrackedWrites: options.secretsAllowTrackedWrites === true })
 }
