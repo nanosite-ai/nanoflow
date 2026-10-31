@@ -328,6 +328,18 @@ describe('secrets: redaction by format', () => {
     for (const line of [`apiKey = "${randomFake(20)}"`, `DB_PASSWORD=${randomFake(20)}`, `SECRET_KEY: ${randomFake(20)}`]) expect(redact(line, {}).text).not.toBe(line)
   })
 
+  test('a key with nothing after it on its line does not take the next line as its value (#39)', () => {
+    // A Helm chart's envFrom, as grep / ripgrep print it: `- secretRef:` ends its line, the reference follows.
+    for (const text of [
+      'templates/server/deployment.yaml:13:            - secretRef:\ntemplates/server/deployment.yaml:14:                name: nanosite-secrets',
+      '12:          envFrom:\n13-            - secretRef:\n14-                name: nanosite-secrets\n15-            - configMapRef:\n16-                name: nanosite-config',
+      `charts/app/values.yaml:7:  apiKey:\ncharts/app/values.yaml:8:    existingSecret: app-secrets-v2`,
+      `- secretRef: nanosite-secrets-v2\n- tokenRef: ${randomFake(20)}`,
+    ]) expect(redact(text, {}).text).toBe(text)
+    // A value on the same line is still masked.
+    expect(redact(`config.yaml:3:  password: ${randomFake(20)}`, {}).text).toBe('config.yaml:3:  password: «redacted:value»')
+  })
+
   test('a mark is refused where it stands for a value, not where it is mentioned or in Markdown', () => {
     const mark = '\u00abredacted:value\u00bb'
     for (const text of [`DB_PASSWORD=${mark}`, `"apiKey": "${mark}"`, `password: ${mark}`, `k = '${mark}'`]) expect(writesMarkAsValue(text, 'C:/p/a.ts')).toBe(true)

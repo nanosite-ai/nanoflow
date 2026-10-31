@@ -201,10 +201,12 @@ export const checkName = (raw: string): { name: string } | { error: string } => 
 /**
  * `NAME=value`, `NAME: "value"`, `"apiKey": "value"`: a key that says secret, then a value. Groups: 1 the key
  * with its separator (kept), 2 the quote, 3 the value (masked only when it looks like a real secret).
- * Bounded so a long run of word characters cannot backtrack for long. Never inside a placeholder.
+ * Bounded so a long run of word characters cannot backtrack for long. Never inside a placeholder. The value is
+ * on the key's line: a key that ends its line (`- secretRef:` in a chart, as grep prints it) does not take the
+ * next line's text as its value.
  */
 const ASSIGNMENT_RE =
-  /(?<!\{\{)(?<![A-Za-z0-9_])([A-Za-z0-9_]{0,40}(?:SECRET|TOKEN|KEY|PASSWORD|PASSWD|PASS|PEPPER|PRIVATE|CREDENTIAL)[A-Za-z0-9_]{0,40}["']?\s*[:=]\s*)(["']?)([^\s"'`,;)}\]]{1,512})\2/gi
+  /(?<!\{\{)(?<![A-Za-z0-9_])([A-Za-z0-9_]{0,40}(?:SECRET|TOKEN|KEY|PASSWORD|PASSWD|PASS|PEPPER|PRIVATE|CREDENTIAL)[A-Za-z0-9_]{0,40}["']?[ \t]*[:=][ \t]*)(["']?)([^\s"'`,;)}\]]{1,512})\2/gi
 
 const EXAMPLE_VALUE_RE =
   /^(?:\$|\{\{|«|<.*>$|\[.*\]$|\*+$|\.{3}|x{3,}|(?:your|my|some|insert|enter|replace)[-_]|.*(?:changeme|change_me|example|placeholder|dummy|sample|redacted|todo|fixme|secret_here|key_here))/i
@@ -212,11 +214,11 @@ const WORDY_RE = /^[A-Za-z]+(?:[-_.](?:[A-Za-z]+|\d+|[A-Za-z]{1,2}\d{1,3}))+$/
 
 /**
  * Keys that name something about a secret, not the secret: `KEY_ID`, `apiKeyName`, `tokenUrl`, `keyPath`,
- * `passwordField`, and keys that are lookup keys (`storageKey`, `cacheKey`).
+ * `passwordField`, a reference to one (`secretRef`, `secretKeyRef`), and keys that are lookup keys (`storageKey`, `cacheKey`).
  */
 export const isNotSecretKey = (key: string): boolean =>
-  /[_-](?:id|name|field|path|url|uri|file|type|header|param|label|prefix|ttl)$/i.test(key) ||
-  /[a-z0-9](?:Id|ID|Name|Field|Path|Url|URL|Uri|File|Type|Header|Param|Label|Prefix|Ttl)$/.test(key) ||
+  /[_-](?:id|name|field|path|url|uri|file|type|header|param|label|prefix|ttl|ref)$/i.test(key) ||
+  /[a-z0-9](?:Id|ID|Name|Field|Path|Url|URL|Uri|File|Type|Header|Param|Label|Prefix|Ttl|Ref)$/.test(key) ||
   /(?:storage|cache|sort|primary|foreign|partition|idempotency|query|i18n|translation|row|item|list|map|lookup|hot)[_-]?key$/i.test(key)
 
 /** Whether an assignment's value is a real-looking secret: 12+ characters, random, letters and digits, no example, no URL or path. */
@@ -379,7 +381,7 @@ export const redact = (text: string, values: Values, options: RedactOptions = {}
   }
   if (!options.skipAssignments) {
     out = out.replace(ASSIGNMENT_RE, (whole, key: string, quote: string, value: string) => {
-      if (!looksSecret(value) || isNotSecretKey(key.replace(/["']?\s*[:=]\s*$/, ''))) return whole
+      if (!looksSecret(value) || isNotSecretKey(key.replace(/["']?[ \t]*[:=][ \t]*$/, ''))) return whole
       hits.push('value')
       return `${key}${quote}${redactedMark('value')}${quote}`
     })
