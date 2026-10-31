@@ -173,7 +173,9 @@ async function maskValues($: $): Promise<Array<[string, string]>> {
     const last = M.lastRead
     const now = last && last.root === root ? await nowOrNull($) : null
     if (last && now !== null && now - last.at < VAULT_CACHE_MS) return M.lastValues
-    return allValues(await readStore($), root)
+    // readStore keeps what it read as M.lastValues.
+    await readStore($)
+    return M.lastValues
   } catch {
     return M.lastValues
   }
