@@ -653,12 +653,14 @@ describe('secrets: Claude imports a .env file (secrets_import)', () => {
       }
       return done(1)
     })
+    // On Linux and macOS the engine resolves a C:/ path against its own folder first: key by the C:/ tail.
+    const keyOf = (path: string) => path.replace(/\\/g, '/').replace(/^.*?(?=[A-Za-z]:\/)/, '')
     on('fs.read', (_$, e) => {
-      const text = live[e.path.replace(/\\/g, '/')]
+      const text = live[keyOf(e.path)]
       if (text === undefined) throw new Error('ENOENT')
       return { value: text }
     })
-    on('fs.exists', (_$, e) => ({ value: e.path.replace(/\\/g, '/') in live }))
+    on('fs.exists', (_$, e) => ({ value: keyOf(e.path) in live }))
     const registered: string[] = []
     on('tool.register', (_$, e) => {
       registered.push(e.name)
