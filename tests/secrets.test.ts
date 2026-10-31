@@ -5,6 +5,8 @@ import type { On } from 'claude-code'
 import { fake, FAKES, randomFake, bareFake } from './fakes'
 
 const VAULT_KEY = 'secrets.vault'
+/** register.tsx's VAULT_CACHE_MS. */
+const VAULT_CACHE_MS = 2_000
 const P = (name: string) => `{{secret:${name}}}`
 
 type E = { value: string; allow?: string[]; allowTracked?: true; allowFiles?: true }
@@ -19,8 +21,10 @@ type Store = { global: Record<string, E>; projects: Record<string, Record<string
 const memStore = (on: On, initial: Record<string, unknown> = {}) => {
   const mem: Record<string, unknown> = structuredClone(initial)
   let failing = false
+  let gets = 0
   on('store.get', (_$, e) => {
     if (failing) throw new Error('store unreadable')
+    gets += 1
     return { value: mem[e.key] }
   })
   on('store.set', (_$, e) => {
@@ -35,6 +39,8 @@ const memStore = (on: On, initial: Record<string, unknown> = {}) => {
   return {
     vault: () => (mem[VAULT_KEY] ?? { global: {}, projects: {} }) as Store,
     raw: mem,
+    /** How many times the store was read. */
+    gets: () => gets,
     fail: () => {
       failing = true
     },
@@ -388,6 +394,34 @@ describe('secrets: what the model reads is masked', () => {
     expect(kept).toContain(P('API_TOKEN'))
     expect(kept).toContain('«redacted:github»')
     expect(kept).toContain('DB_PASSWORD=«redacted:value»')
+  })
+
+  test('masking reuses the vault it last read or wrote for a moment, not a store read per row; then reads again', async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000 })
+    const value = randomFake(24)
+    const store = memStore(on, { [VAULT_KEY]: vaultOf({ API_TOKEN: { value } }) })
+    const rows = mock.session(on)
+    on('prompt.submit', (_$, e) => ({ text: e.text }))
+    const kept = () => JSON.stringify(rows.appended().map(r => r.message.content))
+    for (let i = 0; i < 5; i += 1) await $.session.append(row('Bash', `out ${value}`, `t-${i}`))
+    expect(store.gets()).toBe(1)
+    expect(kept()).not.toContain(value)
+    // A value this session vaults is masked at once, from what it wrote, with no further read.
+    const db = randomFake(20)
+    await $.prompt.submit({ text: `use DB_PASSWORD=${db}`, wait: false, origin: { kind: 'composer' } } as never)
+    const afterWrite = store.gets()
+    await $.session.append(row('Bash', `db ${db}`, 't-db'))
+    expect(store.gets()).toBe(afterWrite)
+    expect(kept()).not.toContain(db)
+    expect(kept()).toContain(P('PASTED_1'))
+    // Another session's change is read once the moment has passed.
+    const later = randomFake(24)
+    store.raw[VAULT_KEY] = { ...store.vault(), global: { ...store.vault().global, LATER: { value: later, allow: [] } } }
+    await clock.advance(VAULT_CACHE_MS)
+    await $.session.append(row('Bash', `later ${later}`, 't-later'))
+    expect(store.gets()).toBe(afterWrite + 1)
+    expect(kept()).not.toContain(later)
+    expect(kept()).toContain(P('LATER'))
   })
 
   test('when the store cannot be read, the values last read are still masked', async ($, on) => {

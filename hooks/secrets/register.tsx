@@ -22,6 +22,8 @@ type $ = EngineInterface
 export const SECRETS_PANE = 'nanoflow-secrets'
 export const SECRETS_COMMAND = 'secrets'
 export const REVEAL_MS = 10_000
+/** How long masking reuses the vault values it last read or wrote before reading the store again. */
+export const VAULT_CACHE_MS = 2_000
 export const IMPORT_TOOL = 'secrets_import'
 /** The import tool as the model calls it. */
 export const IMPORT_TOOL_ID = `mcp__nanoflow__${IMPORT_TOOL}`
@@ -105,6 +107,8 @@ const trustedAtom = atom({ plugin: 'nanoflow', key: 'secretsTrusted' } as const,
  */
 const M = {
   lastValues: [] as Array<[string, string]>,
+  /** When, and for which project, `lastValues` was read or written: masking reuses it for VAULT_CACHE_MS. */
+  lastRead: null as { root: string | null; at: number } | null,
   exampleIds: new Set<string>(),
   writing: Promise.resolve() as Promise<unknown>,
   /** The user's setting: every secret may be written into tracked files. */
@@ -127,8 +131,24 @@ async function projectRoot($: $): Promise<string | null> {
 
 async function readStore($: $): Promise<VaultStore> {
   const store = parseVaultStore(await $.store.get(VAULT_KEY))
-  M.lastValues = allValues(store, await projectRoot($))
+  await remember($, store, await projectRoot($))
   return store
+}
+
+/** The time, or null when there is no clock to ask (the values are then read every time). */
+async function nowOrNull($: $): Promise<number | null> {
+  try {
+    return await $.clock.now()
+  } catch {
+    return null
+  }
+}
+
+/** Keeps a store's values, just read or written, as the ones masking uses. */
+async function remember($: $, store: VaultStore, root: string | null): Promise<void> {
+  M.lastValues = allValues(store, root)
+  const at = await nowOrNull($)
+  M.lastRead = at === null ? null : { root, at }
 }
 
 /** The store for masking and filling in: never throws, so a store that cannot be read still leaves the patterns. */
@@ -140,10 +160,20 @@ async function storeOrEmpty($: $): Promise<VaultStore> {
   }
 }
 
-/** The values to mask with: all of the store's, or (when it cannot be read) the ones last read. */
+/**
+ * The values to mask with: all of the store's, or (when it cannot be read) the ones last read. Every row the
+ * conversation keeps is masked, so the values read or written within VAULT_CACHE_MS (for this project) are
+ * reused rather than read again: this session's own changes update them as they are written, and another
+ * session's are picked up at the next read (each model request's prompt.compose reads the store too).
+ * Filling a placeholder in (tool.call) always reads the store, so a policy widened outside the pane is seen.
+ */
 async function maskValues($: $): Promise<Array<[string, string]>> {
   try {
-    return allValues(await readStore($), await projectRoot($))
+    const root = await projectRoot($)
+    const last = M.lastRead
+    const now = last && last.root === root ? await nowOrNull($) : null
+    if (last && now !== null && now - last.at < VAULT_CACHE_MS) return M.lastValues
+    return allValues(await readStore($), root)
   } catch {
     return M.lastValues
   }
@@ -213,7 +243,7 @@ async function changeStore(
     change(store, root, trusted)
     await $.store.set(VAULT_KEY, store)
     await update($, trustedAtom, () => trusted)
-    M.lastValues = allValues(store, root)
+    await remember($, store, root)
     await publish($, store)
     return store
   })
