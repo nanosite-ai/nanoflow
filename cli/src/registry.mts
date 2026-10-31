@@ -9,7 +9,7 @@ import { registerBoard, registerTicket } from "./commands/ticket.mjs";
 import { registerEnv, registerWt } from "./commands/wt.mjs";
 import { registerJira } from "./commands/jira.mjs";
 
-export const VERSION = "0.1.8";
+export const VERSION = "0.1.9";
 
 export const buildProgram = (): Command => {
   const program = new Command("nanoflow")
