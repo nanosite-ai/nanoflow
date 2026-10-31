@@ -334,10 +334,18 @@ describe('secrets: redaction by format', () => {
       'templates/server/deployment.yaml:13:            - secretRef:\ntemplates/server/deployment.yaml:14:                name: nanosite-secrets',
       '12:          envFrom:\n13-            - secretRef:\n14-                name: nanosite-secrets\n15-            - configMapRef:\n16-                name: nanosite-config',
       `charts/app/values.yaml:7:  apiKey:\ncharts/app/values.yaml:8:    existingSecret: app-secrets-v2`,
-      `- secretRef: nanosite-secrets-v2\n- tokenRef: ${randomFake(20)}`,
+      `- secretRef: ${randomFake(20)}\n  secretKeyRef:\n    name: nanosite-secrets`,
+      '  - secretRef:\n      name: nanosite-secrets',
     ]) expect(redact(text, {}).text).toBe(text)
-    // A value on the same line is still masked.
+    // A value on the same line, or on an indented next line (YAML, pretty JSON), is still masked; so is a *Ref
+    // key that is not a Kubernetes Secret reference.
     expect(redact(`config.yaml:3:  password: ${randomFake(20)}`, {}).text).toBe('config.yaml:3:  password: «redacted:value»')
+    expect(redact(`db:\n  password:\n    ${randomFake(20)}`, {}).text).toBe('db:\n  password:\n    «redacted:value»')
+    expect(redact(`{\n  "apiKey":\n    "${randomFake(20)}"\n}`, {}).text).toBe('{\n  "apiKey":\n    "«redacted:value»"\n}')
+    for (const line of [`tokenRef: ${randomFake(20)}`, `GITHUB_TOKEN_REF=${randomFake(20)}`]) expect(redact(line, {}).text).not.toBe(line)
+    // The write guard reads a value on the indented next line too, and not one at column 0.
+    expect(writesMarkAsValue('password:\n    «redacted:value»', 'C:/p/a.yaml')).toBe(true)
+    expect(writesMarkAsValue('log line:\n«redacted:value» was shown', 'C:/p/a.ts')).toBe(false)
   })
 
   test('a mark is refused where it stands for a value, not where it is mentioned or in Markdown', () => {
