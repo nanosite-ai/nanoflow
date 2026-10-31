@@ -13,7 +13,9 @@
  * it may be written into files at all (git-ignored ones), and into files git tracks too (both off by
  * default). Only the pane sets these, and a change made anywhere else is not trusted (see `narrowPolicy`).
  */
-export type Entry = { value: string; allow: string[]; allowTracked?: true; allowFiles?: true }
+export type Entry = { value: string; allow: string[]; allowTracked?: true; allowFiles?: true; source?: Source }
+/** Where a secret came from, for the pane: imported by Claude from a file (its path), when. */
+export type Source = { kind: 'agent-import'; path: string; at: number }
 export type Scope = 'project' | 'global'
 /** What `$.store` holds under VAULT_KEY: secrets for every project (by root folder) and for all projects. */
 export type VaultStore = { global: Record<string, Entry>; projects: Record<string, Record<string, Entry>> }
@@ -35,6 +37,13 @@ export const redactedMark = (kind: string): string => `${REDACTED_MARK}${kind}»
 
 const isRecord = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === 'object' && !Array.isArray(v)
 
+const sourceOf = (raw: unknown): Source | null =>
+  isRecord(raw) && raw.kind === 'agent-import' && typeof raw.path === 'string' && typeof raw.at === 'number' ? { kind: 'agent-import', path: raw.path, at: raw.at } : null
+
+/** The pane's label for where a secret came from, or null when the store does not say. */
+export const sourceLabel = (source: Source | undefined): string | null =>
+  source ? `imported by Claude from ${source.path} · ${new Date(source.at).toISOString().slice(0, 10)}` : null
+
 const entriesOf = (raw: unknown): Record<string, Entry> => {
   if (!isRecord(raw)) return {}
   const out: Record<string, Entry> = {}
@@ -48,6 +57,7 @@ const entriesOf = (raw: unknown): Record<string, Entry> => {
         allow: Array.isArray(v.allow) ? v.allow.filter((a): a is string => typeof a === 'string') : [],
         ...(v.allowTracked === true ? { allowTracked: true as const } : {}),
         ...(v.allowFiles === true ? { allowFiles: true as const } : {}),
+        ...(sourceOf(v.source) ? { source: sourceOf(v.source)! } : {}),
       }
     }
   }
@@ -729,6 +739,52 @@ export const nextPastedName = (taken: Iterable<string>): string => {
   return `${PASTED_PREFIX}${n}`
 }
 
+// ─── Claude importing a .env file ────────────────────────────────────────────────────────────────
+
+/** Forward slashes, `.` and `..` resolved, no trailing slash. */
+export const normalizePath = (path: string): string => {
+  const parts: string[] = []
+  const slashed = path.replace(/\\/g, '/')
+  const lead = /^(?:[A-Za-z]:)?\//.exec(slashed)?.[0] ?? ''
+  for (const part of slashed.slice(lead.length).split('/')) {
+    if (part === '' || part === '.') continue
+    if (part === '..') parts.pop()
+    else parts.push(part)
+  }
+  return `${lead}${parts.join('/')}`.replace(/\/$/, '') || lead
+}
+
+/** Whether `path` lies inside one of the folders `roots`; a Windows drive path is compared ignoring case. */
+export const isInside = (path: string, roots: readonly string[]): boolean => {
+  const fold = (t: string) => (/^[A-Za-z]:\//.test(t) ? t.toLowerCase() : t)
+  const p = fold(normalizePath(path))
+  return roots.some(root => {
+    const r = fold(normalizePath(root))
+    return r !== '' && p.startsWith(`${r}/`)
+  })
+}
+
+/** Whether a file is a staging file Claude's import deletes by default: one under a `.secrets/` folder. */
+export const isStagingFile = (path: string): boolean => /(?:^|\/)\.secrets\//.test(normalizePath(path))
+
+/** What the import tool answers the model: names and lengths, never a value. */
+export const importReport = (o: {
+  imported: ReadonlyArray<{ name: string; value: string }>
+  skipped: readonly string[]
+  scope: Scope
+  shown: string
+  /** The file: deleted, could not be deleted, kept because some names were skipped, or left as asked. */
+  deleted: 'deleted' | 'failed' | 'kept' | null
+}): string =>
+  [
+    o.imported.length
+      ? `Imported ${o.imported.length} secret${o.imported.length === 1 ? '' : 's'} from ${o.shown} into the vault (${o.scope === 'project' ? 'this project' : 'all projects'}): ${o.imported.map(e => `${e.name} (${e.value.length} chars)`).join(', ')}.`
+      : `Imported nothing from ${o.shown}.`,
+    o.skipped.length ? `Skipped ${o.skipped.join(', ')}: already in the vault (the user replaces a value in /secrets).` : '',
+    o.imported.length ? 'They are allowed nowhere yet: ask the user to allow the commands or hosts each is for in /secrets, then use {{secret:NAME}}. The user can undo this import with /secrets undo.' : '',
+    o.deleted === 'deleted' ? `Deleted ${o.shown}.` : o.deleted === 'failed' ? `Could not delete ${o.shown}; ask the user to delete it.` : o.deleted === 'kept' ? `Kept ${o.shown}, as it still holds the skipped values.` : '',
+  ].filter(Boolean).join(' ')
+
 // ─── the model's instructions ────────────────────────────────────────────────────────────────────
 
 export const SECTION_ID = 'nanoflow:secrets'
@@ -740,6 +796,7 @@ export const sectionText = (names: readonly string[]): string =>
     "The user keeps secrets (API keys, tokens, passwords) in nanoflow's vault, out of your sight. Never print, echo, log, transform or ask the user to paste a secret value, and never try to read one back.",
     'Where a value is needed, write the placeholder {{secret:NAME}} in ONE simple Bash or PowerShell command (no ;, &&, ||, pipes, $(...), variables, redirections or comments), with the program and host written out. It is filled in when the tool runs, only for the programs and hosts the user allowed for that secret, never for a shell or interpreter. In the content of a Write or Edit it is filled in only when the user allowed that secret in files, and only into a git-ignored file (such as .env) unless they also allowed tracked files. A value that comes back in output shows as the placeholder again, or as «redacted:<kind>» for a secret the vault does not hold.',
     'Never write a «redacted:...» mark into a file: it stands for a value you never saw. To write the placeholder text itself (in docs or templates), escape it with a backslash: \\{{secret:NAME}}.',
+    'To bring secrets in from a file, write them to a git-ignored .secrets/.env in the project and call the nanoflow secrets_import tool with its path: nanoflow reads the file itself, stores the values, deletes the file and tells you only the names. Never read that file back.',
     "Only the user changes what a secret may be used for, in the Secrets pane: never read or change nanoflow's store or its settings.",
     'If a secret you need is not in the vault, or not allowed for a command or host, ask the user to add or allow it with /secrets (the Secrets pane), naming it in UPPER_SNAKE_CASE.',
     names.length ? `Available secret names: ${names.join(', ')}.` : 'The vault is empty.',

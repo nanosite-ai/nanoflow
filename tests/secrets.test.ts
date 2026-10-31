@@ -630,3 +630,180 @@ describe('secrets: the /secrets pane', () => {
     expect(text).toBe('Secrets pane opened.')
   })
 })
+
+describe('secrets: Claude imports a .env file (secrets_import)', () => {
+  const TOOL = 'mcp__nanoflow__secrets_import'
+
+  /** A session in C:/proj (the main checkout) run from the worktree C:/proj-38-x, with files and git mocked. */
+  const session = async ($: Parameters<Parameters<typeof test>[1]>[0], on: On, files: Record<string, string>, opts: { tracked?: string[]; notIgnored?: string[]; links?: Record<string, string>; noRepo?: boolean } = {}) => {
+    mock.clock(on, { now: Date.UTC(2026, 9, 31) })
+    mock.env(on, {})
+    const live = { ...files }
+    const runs: string[][] = []
+    on('process.run', (_$, e) => {
+      runs.push([...e.argv])
+      const done = (exitCode: number, stdout = '', stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
+      if (e.argv.includes('--git-common-dir')) return opts.noRepo ? done(128, '', 'fatal: not a git repository') : done(0, 'C:/proj/.git\n')
+      const path = e.argv.at(-1)!
+      if (opts.noRepo) return done(128, '', 'fatal: not a git repository')
+      if (e.argv.includes('ls-files')) return done(opts.tracked?.includes(path) ? 0 : 1)
+      if (e.argv.includes('check-ignore')) return done(opts.notIgnored?.includes(path) ? 1 : 0)
+      if (e.argv.includes('clean')) {
+        delete live[path]
+        return done(0)
+      }
+      return done(1)
+    })
+    // On Linux and macOS the engine resolves a C:/ path against its own folder first: key by the C:/ tail.
+    const keyOf = (path: string) => path.replace(/\\/g, '/').replace(/^.*?(?=[A-Za-z]:\/)/, '')
+    on('fs.read', (_$, e) => {
+      const text = live[keyOf(e.path)]
+      if (text === undefined) throw new Error('ENOENT')
+      return { value: text }
+    })
+    on('fs.exists', (_$, e) => ({ value: keyOf(e.path) in live }))
+    // Where a path lands: a link's target, a file or a project folder as it is; nowhere otherwise.
+    on('fs.stat', (_$, e) => {
+      const key = keyOf(e.path)
+      const isFolder = ['C:/proj', 'C:/proj-38-x'].includes(key)
+      if (!(key in live) && !isFolder && !opts.links?.[key]) throw new Error('ENOENT')
+      return { value: { kind: isFolder ? 'dir' : 'file', size: 0, mtimeMs: 0, isLink: Boolean(opts.links?.[key]), realPath: opts.links?.[key] ?? key } }
+    })
+    const registered: string[] = []
+    on('tool.register', (_$, e) => {
+      registered.push(e.name)
+      return { value: { tool: `mcp__nanoflow__${e.name}` } }
+    })
+    on('command.register', () => ({ value: { command: 'x' } }))
+    on('ui.status', () => ({ value: undefined }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    await $.session.start({ cwd: opts.noRepo ? 'C:/proj' : 'C:/proj-38-x', surface: 'terminal', isInteractive: false })
+    return { live, runs, registered }
+  }
+
+  const call = async ($: { tool: { call: (i: never) => Promise<{ result?: unknown; deny?: string; text?: string }> } }, input: Record<string, unknown>) => {
+    const r = await $.tool.call({ tool: TOOL, ...input } as never)
+    return { ok: r.deny === undefined && !('isError' in r && r.isError), text: String(r.deny ?? (typeof r.result === 'string' ? r.result : r.text) ?? '') }
+  }
+
+  test('it is registered, stores every value allowed nowhere, answers names and lengths only, deletes the staging file', async ($, on) => {
+    const store = memStore(on, {})
+    const toasts = captureToasts(on)
+    const a = randomFake(24)
+    const pem = FAKES['private-key']!
+    const { live, registered } = await session($, on, { 'C:/proj-38-x/.secrets/.env': `# staged\nPLATFORM_JWT_SECRET=${a}\nexport TLS_KEY="${pem}"\n` })
+    expect(registered).toContain('secrets_import')
+    const r = await call($, { path: '.secrets/.env' })
+    expect(r.ok).toBe(true)
+    expect(r.text).toContain('PLATFORM_JWT_SECRET (24 chars)')
+    expect(r.text).toContain(`TLS_KEY (${pem.length} chars)`)
+    expect(r.text).toContain('Deleted .secrets/.env.')
+    expect(r.text).not.toContain(a)
+    expect(r.text).not.toContain('MIIE')
+    const entries = store.vault().projects['C:/proj']!
+    expect(entries.PLATFORM_JWT_SECRET).toEqual({ value: a, allow: [], source: { kind: 'agent-import', path: '.secrets/.env', at: Date.UTC(2026, 9, 31) } } as never)
+    expect(entries.TLS_KEY!.allow).toEqual([])
+    expect('C:/proj-38-x/.secrets/.env' in live).toBe(false)
+    expect(toasts).toContain('🔐 Claude imported PLATFORM_JWT_SECRET, TLS_KEY from .secrets/.env — allow or undo in /secrets')
+    // Allowed nowhere: a command using it is refused.
+    const used = await $.tool.call({ tool: 'Bash', command: `curl -H "x: ${P('PLATFORM_JWT_SECRET')}" https://api.example.com` })
+    expect(denied(used)).toContain("isn't allowed for curl")
+    // The pane shows where it came from, and /secrets undo takes the import back.
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    expect(await ui.find({ type: 'Text', text: /imported by Claude from \.secrets\/\.env · 2026-10-31/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /Imported by Claude from \.secrets\/\.env: PLATFORM_JWT_SECRET, TLS_KEY/ })).toBeDefined()
+    await ui.unmount()
+    const undone = await $.command.run({ command: 'secrets', args: 'undo' } as never)
+    expect(undone.text).toBe('↩ Undid the import from .secrets/.env: removed PLATFORM_JWT_SECRET, TLS_KEY.')
+    expect(store.vault().projects['C:/proj']).toEqual({})
+  })
+
+  test('a name already in the vault is skipped and keeps its value; the file is kept; deleteAfter false keeps it too', async ($, on) => {
+    const mine = randomFake(24)
+    const store = memStore(on, { [VAULT_KEY]: vaultOf({}, { 'C:/proj': { API_TOKEN: { value: mine, allow: ['curl'] } } }) })
+    const { live } = await session($, on, {
+      'C:/proj-38-x/.secrets/.env': `API_TOKEN=${randomFake(24)}\nNEW_ONE=${randomFake(20)}\n`,
+      'C:/proj-38-x/local.env': `OTHER=${randomFake(20)}\n`,
+    })
+    const r = await call($, { path: 'C:/proj-38-x/.secrets/.env' })
+    expect(r.text).toContain('Skipped API_TOKEN')
+    expect(r.text).toContain('Kept .secrets/.env')
+    expect(store.vault().projects['C:/proj']!.API_TOKEN).toEqual({ value: mine, allow: ['curl'] })
+    expect(store.vault().projects['C:/proj']!.NEW_ONE).toBeDefined()
+    expect('C:/proj-38-x/.secrets/.env' in live).toBe(true)
+    // Outside .secrets/, the file stays unless asked; scope global puts it in all projects.
+    const other = await call($, { path: 'local.env', scope: 'global', deleteAfter: true })
+    expect(other.ok).toBe(true)
+    expect(store.vault().global.OTHER).toBeDefined()
+    // deleteAfter never deletes a file outside .secrets/: it could be the user's own .env.
+    expect('C:/proj-38-x/local.env' in live).toBe(true)
+    // A project import never hides an all-projects secret of the same name.
+    live['C:/proj-38-x/.secrets/b.env'] = `OTHER=${randomFake(20)}
+`
+    const shadow = await call($, { path: '.secrets/b.env' })
+    expect(shadow.text).toContain('Skipped OTHER')
+    expect(store.vault().projects['C:/proj']!.OTHER).toBeUndefined()
+  })
+
+  test('refuses a tracked file, a path outside the project, a missing file and one with no KEY=VALUE, never echoing a value', async ($, on) => {
+    const store = memStore(on, {})
+    const v = randomFake(24)
+    await session($, on, {
+      'C:/proj-38-x/config/.env': `API_TOKEN=${v}\n`,
+      'C:/Users/me/AppData/Local/Temp/x.env': `API_TOKEN=${v}\n`,
+      'C:/proj-38-x/.secrets/notes.txt': `just ${v} here\n`,
+      'C:/proj-38-x/.secrets/open.env': `API_TOKEN=${v}
+`,
+      'C:/Users/me/.aws/credentials': `AWS_SECRET=${v}
+`,
+    }, { tracked: ['C:/proj-38-x/config/.env'], notIgnored: ['C:/proj-38-x/.secrets/open.env'], links: { 'C:/proj-38-x/.secrets/link.env': 'C:/Users/me/.aws/credentials' } })
+    const tracked = await call($, { path: 'config/.env' })
+    expect(tracked.ok).toBe(false)
+    expect(tracked.text).toContain('git tracks config/.env')
+    const outside = await call($, { path: 'C:/Users/me/AppData/Local/Temp/x.env' })
+    expect(outside.text).toContain('is outside this project')
+    const sneaky = await call($, { path: '.secrets/../../Users/me/AppData/Local/Temp/x.env' })
+    expect(sneaky.text).toContain('is outside this project')
+    const linked = await call($, { path: '.secrets/link.env' })
+    expect(linked.text).toContain('is outside this project')
+    const open = await call($, { path: '.secrets/open.env' })
+    expect(open.text).toContain('git does not ignore .secrets/open.env')
+    expect((await call($, { path: '.secrets/missing.env' })).text).toContain('could not read .secrets/missing.env')
+    expect((await call($, { path: '.secrets/notes.txt' })).text).toContain('no KEY=VALUE lines')
+    expect((await call($, {})).text).toContain('needs the path')
+    for (const r of [tracked, outside, sneaky, linked, open]) expect(r.text).not.toContain(v)
+    expect(store.raw[VAULT_KEY]).toBeUndefined()
+  })
+
+  test('outside a repository the folder itself is the project', async ($, on) => {
+    const store = memStore(on, {})
+    await session($, on, { 'C:/proj/.secrets/.env': `API_TOKEN=${randomFake(24)}\n` }, { noRepo: true })
+    const r = await call($, { path: '.secrets/.env' })
+    expect(r.ok).toBe(true)
+    expect(Object.keys(store.vault().projects['C:/proj'] ?? {})).toEqual(['API_TOKEN'])
+    // git cannot delete it outside a repository: the model is told to ask.
+    expect(r.text).toContain('Could not delete .secrets/.env')
+  })
+
+  test('a name given twice keeps its last value; a value the person saves in the pane drops the import label and its undo', async ($, on) => {
+    const store = memStore(on, {})
+    const last = randomFake(24)
+    await session($, on, { 'C:/proj-38-x/.secrets/.env': `TOKEN=${randomFake(24)}
+TOKEN=${last}
+OTHER=${randomFake(20)}
+` })
+    const r = await call($, { path: '.secrets/.env' })
+    expect(r.text).not.toContain('Skipped')
+    expect(r.text).toContain('Deleted .secrets/.env.')
+    expect(store.vault().projects['C:/proj']!.TOKEN!.value).toBe(last)
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const mine = randomFake(24)
+    await ui.input({ key: 'secret-add-name-1', text: 'TOKEN', kind: 'change' })
+    await ui.input({ key: 'secret-add-value-1', text: mine })
+    expect(store.vault().projects['C:/proj']!.TOKEN).toEqual({ value: mine, allow: [] })
+    await ui.unmount()
+    const undone = await $.command.run({ command: 'secrets', args: 'undo' } as never)
+    expect(undone.text).toBe('↩ Undid the import from .secrets/.env: removed OTHER.')
+    expect(store.vault().projects['C:/proj']!.TOKEN!.value).toBe(mine)
+  })
+})

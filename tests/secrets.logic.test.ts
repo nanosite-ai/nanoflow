@@ -2,7 +2,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import { statusLine } from '../hooks/progress'
 import {
-  allValues, base64, checkName, commandWords, disallowedUse, effectiveEntries, firstProgram, formsOf, isExampleFile, narrowPolicy,
+  allValues, base64, checkName, importReport, isInside, isStagingFile, normalizePath, sourceLabel, commandWords, disallowedUse, effectiveEntries, firstProgram, formsOf, isExampleFile, narrowPolicy,
   nextPastedName, parseAllow, parseEnv, parseVaultStore, placeholderNames, policiesOf, quoteFor, redact, redactContent, sectionText,
   substitute, widenedBy, withoutConfigFiles, writesMarkAsValue,
 } from '../hooks/secrets/redact'
@@ -458,5 +458,34 @@ describe('secrets: .env, prompt section, status line', () => {
     const snapshot = { version: 1 as const, generatedAt: '', mainRoot: 'C:/r', current: null, worktrees: [], board: null }
     expect(statusLine({ snapshot, checks: {}, running: null, skill: null, secrets: 3 })).toContain('🔐 3')
     expect(statusLine({ snapshot, checks: {}, running: null, skill: null, secrets: 0 })).not.toContain('🔐')
+  })
+})
+
+describe('secrets: Claude importing a .env file', () => {
+  test('paths are normalized and must lie inside a project folder', () => {
+    expect(normalizePath('C:\\proj\\.secrets\\..\\.env')).toBe('C:/proj/.env')
+    expect(normalizePath('/home/me/./p//a/')).toBe('/home/me/p/a')
+    expect(isInside('C:/proj/.secrets/.env', ['C:/proj'])).toBe(true)
+    expect(isInside('c:/PROJ/.env', ['C:/proj/'])).toBe(true)
+    expect(isInside('C:/proj-other/.env', ['C:/proj'])).toBe(false)
+    expect(isInside('/home/u/PROJ/.env', ['/home/u/proj'])).toBe(false)
+    expect(isInside('/x/.env', ['/'])).toBe(false)
+    expect(isInside('C:/proj/../tmp/.env', ['C:/proj'])).toBe(false)
+    expect(isInside('C:/proj', ['C:/proj'])).toBe(false)
+    expect(isStagingFile('C:/proj/.secrets/.env')).toBe(true)
+    expect(isStagingFile('C:/proj/.env.secrets')).toBe(false)
+  })
+
+  test('the report names and counts, never a value; a source survives the store and gets a label', () => {
+    const v = randomFake(24)
+    const text = importReport({ imported: [{ name: 'API_TOKEN', value: v }], skipped: ['OLD'], scope: 'project', shown: '.secrets/.env', deleted: 'kept' })
+    expect(text).toContain('API_TOKEN (24 chars)')
+    expect(text).toContain('Skipped OLD')
+    expect(text).not.toContain(v)
+    const at = Date.UTC(2026, 9, 31)
+    const store = parseVaultStore({ global: { A: { value: v, allow: [], source: { kind: 'agent-import', path: '.secrets/.env', at } }, B: { value: v, allow: [], source: { kind: 'x' } } }, projects: {} })
+    expect(store.global.A!.source).toEqual({ kind: 'agent-import', path: '.secrets/.env', at })
+    expect(store.global.B!.source).toBeUndefined()
+    expect(sourceLabel(store.global.A!.source)).toBe('imported by Claude from .secrets/.env · 2026-10-31')
   })
 })

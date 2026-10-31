@@ -70,6 +70,8 @@ export type NfSecret = {
   allowFiles: boolean
   /** What the store allows beyond what the user set in the pane (changed elsewhere, not in force). */
   changed: string[]
+  /** Where it came from (`imported by Claude from .secrets/.env · 2026-10-31`), when the store says. */
+  source: string | null
 }
 
 /** What the user allowed a secret for, in the pane. */
@@ -110,8 +112,8 @@ declare module 'claude-code' {
       secretsDraft: string
       /** Where the add form saves. */
       secretsAddScope: NfSecretScope
-      /** The secrets the last prompt stored on its own, for Undo. */
-      secretsPasted: { names: string[]; scope: NfSecretScope } | null
+      /** The secrets the last prompt stored on its own, or Claude's last import (`from`: its file), for Undo. */
+      secretsPasted: { names: string[]; scope: NfSecretScope; from?: string } | null
       /**
        * Each secret's policy as the user last set it in the pane (by scope, project and name), or null until the
        * store is first read. Held by the host for the session: no tool call can write it, so a wider policy

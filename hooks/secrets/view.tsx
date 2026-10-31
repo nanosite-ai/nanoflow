@@ -19,6 +19,8 @@ export type SecretsData = {
   addScope: NfSecretScope
   /** Names the last prompt stored on its own, offered for Undo. */
   pasted: readonly string[]
+  /** The file those names came from, when Claude imported them (null: the person's prompt). */
+  pastedFrom: string | null
   /** The user's setting lets every secret be written into tracked files. */
   trackedForAll: boolean
 }
@@ -60,6 +62,7 @@ const SecretRow = (el: PaneElements, s: NfSecret, data: SecretsData, on: Secrets
       {Row(el, k('row'), [
         <Text key="name" bold>{`🔐 ${s.name}`}</Text>,
         <Text key="len" dimColor>{`${s.length} chars`}</Text>,
+        s.source ? <Text key="source" dimColor>{s.source}</Text> : null,
         <Button key={k('copy')} label="📋 Copy" onPress={press => on.copy(s.id, press.surface)} />,
         revealed === null
           ? <Button key={k('reveal')} label="👁 Reveal" onPress={() => on.reveal(s.id)} />
@@ -124,7 +127,9 @@ export const SecretsView = (el: PaneElements, data: SecretsData, on: SecretsHand
       {data.note && <Text key="secrets-note" color={TONE[data.note.tone]}>{data.note.text}</Text>}
       {data.pasted.length > 0 &&
         Row(el, 'secret-pasted-row', [
-          <Text key="pasted" color={COLOR.wait}>{`Stored from your prompt: ${data.pasted.join(', ')}`}</Text>,
+          <Text key="pasted" color={COLOR.wait}>
+            {data.pastedFrom ? `Imported by Claude from ${data.pastedFrom}: ${data.pasted.join(', ')}` : `Stored from your prompt: ${data.pasted.join(', ')}`}
+          </Text>,
           <Button key="secret-undo-pasted" label="↩ Undo" onPress={on.undoPasted} />,
         ])}
       {data.root !== null && (

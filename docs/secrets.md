@@ -25,7 +25,7 @@ by its worktrees; the folder itself outside git) and **All projects**:
 | **⚠ Changed outside this pane** | Shown when the store file allows more than you set here (see *Who changes a policy*). **accept** puts that change in force; **undo** writes your policy back. |
 | **Import a .env file** | Takes a path (absolute, `~/…`, or relative to the session's folder). Every `KEY=VALUE` is stored, including multi-line quoted values such as PEM keys. Only the names are shown. |
 | **📋 Copy** · **👁 Reveal** (10 s) · **✏️ Rename** · **🗑 Delete** (asks first) | Shown per row. A row shows the name and the value's length, never a part of the value. |
-| **↩ Undo** | Shown after a prompt stored a secret on its own; removes it. `/secrets undo` does the same. |
+| **↩ Undo** | Shown after a prompt stored a secret on its own, or after Claude imported a file; removes those secrets. `/secrets undo` does the same. |
 
 The status line shows `🔐 <count>` when the vault has entries.
 
@@ -39,6 +39,22 @@ written as `{{secret:NAME}}` and uses no secret.
 Claude reads it. A toast says *Stored as PASTED_1 — rename, allow or undo in /secrets*. A value already in
 the vault is replaced by its own name. Context-only finds (a `Bearer` header, a URL password, a
 `PASSWORD=…` line) are masked but not stored.
+
+**Claude can import a `.env` file for you**, without seeing the values. Ask it to stage the secrets in a
+git-ignored `.secrets/.env` inside the project, then it calls the `secrets_import` tool with that path.
+nanoflow reads and parses the file itself, and Claude gets back the names and lengths only. The rules:
+
+- The file must be inside the project (the main checkout or the session's worktree), where it really lands
+  (a symlink to `~/.aws/credentials` is outside), and **git-ignored**. A tracked or merely untracked file, a
+  path outside the project (a temp folder, `../..`) and a missing file are refused.
+- Imported secrets go to *This project* (or `scope: "global"`), are **allowed nowhere**, and show
+  *imported by Claude from .secrets/.env · <date>* in the pane. A toast says so too.
+- A name the session already has (in this project or all projects) is skipped: Claude never replaces or
+  hides a value you stored. A name given twice in the file keeps its last value.
+- Only a file under `.secrets/` is ever deleted, once stored (`deleteAfter: false` keeps it); it is kept if
+  some names were skipped, so their values are not lost. Any other file (your own `.env`) is left alone.
+- Saving your own value under an imported name in the pane makes it yours: the label goes, and undo leaves it.
+- `/secrets undo` (or **↩ Undo** in the pane) removes what the last import stored.
 
 ## When a placeholder is filled in
 
