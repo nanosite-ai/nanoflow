@@ -225,7 +225,7 @@ function note($: $, text: string, tone: NfTone = 'info') {
   return update($, noteAtom, () => ({ text, tone }))
 }
 
-/** Masks the secrets in a person's text; a high-confidence token the vault lacks is stored as PASTED_<n>. */
+/** Masks the secrets in a person's text; a token, a context secret or a cue-word value the vault lacks is stored as PASTED_<n>. */
 async function vaultPasted($: $, text: string): Promise<{ text: string; stored: string[] } | null> {
   const values = await maskValues($)
   const store = await storeOrEmpty($)
@@ -234,6 +234,8 @@ async function vaultPasted($: $, text: string): Promise<{ text: string; stored: 
   const taken = Object.keys(effectiveEntries(store, root))
   const added: Record<string, string> = {}
   const result = redact(text, values, {
+    // The person's own words: context finds and a bare value after a cue word are vaulted too.
+    person: true,
     onUnknown: value => {
       const known = byValue.get(value)
       if (known) return known
@@ -812,7 +814,7 @@ export const registerSecrets = (on: On, options: SecretsOptions): void => {
     return next(masked ? { ...e, text: masked.text } : e)
   }).catch(($, e, next) => {
     if (next.called || e.command || (e.isMeta && !e.turnId)) return next(e)
-    return next({ ...e, text: redact(e.text, M.lastValues).text })
+    return next({ ...e, text: redact(e.text, M.lastValues, { person: true }).text })
   })
 
   // Every command's arguments (a known limit: a command that takes a credential gets the placeholder).
@@ -820,5 +822,5 @@ export const registerSecrets = (on: On, options: SecretsOptions): void => {
     if (!e.args || e.command === SECRETS_COMMAND) return next(e)
     const masked = await vaultPasted($, e.args)
     return next(masked ? { ...e, args: masked.text } : e)
-  }).catch(($, e, next) => (next.called ? next(e) : next({ ...e, args: redact(e.args, M.lastValues).text })))
+  }).catch(($, e, next) => (next.called ? next(e) : next({ ...e, args: redact(e.args, M.lastValues, { person: true }).text })))
 }

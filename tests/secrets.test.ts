@@ -2,7 +2,7 @@
 // vaulting a pasted token, the system section, and the /secrets pane. Every value is a fake built at run time.
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { fake, FAKES, randomFake } from './fakes'
+import { fake, FAKES, randomFake, bareFake } from './fakes'
 
 const VAULT_KEY = 'secrets.vault'
 const P = (name: string) => `{{secret:${name}}}`
@@ -445,8 +445,10 @@ describe('secrets: what the model reads is masked', () => {
 })
 
 describe('secrets: a token typed into a prompt', () => {
-  test('a high-confidence token is vaulted as PASTED_<n>; a context secret is masked, not vaulted; /secrets undo removes it', async ($, on) => {
+  test('a token, a context secret and a bare value after a cue word are vaulted as PASTED_<n>; /secrets undo removes them', async ($, on) => {
     const known = randomFake(24)
+    const db = randomFake(20)
+    const bare = bareFake(18)
     const store = memStore(on, { [VAULT_KEY]: vaultOf({ API_TOKEN: { value: known }, PASTED_1: { value: randomFake(20) } }) })
     const toasts = captureToasts(on)
     let entered = ''
@@ -454,14 +456,24 @@ describe('secrets: a token typed into a prompt', () => {
       entered = e.text
       return { text: e.text }
     })
-    await $.prompt.submit({ text: `deploy with ${FAKES.stripe} and ${known}, DB_PASSWORD=${randomFake(20)}`, wait: false, origin: { kind: 'composer' } } as never)
-    expect(entered).toBe(`deploy with ${P('PASTED_2')} and ${P('API_TOKEN')}, DB_PASSWORD=«redacted:value»`)
+    await $.prompt.submit({ text: `deploy with ${FAKES.stripe} and ${known}, DB_PASSWORD=${db}; the admin password is ${bare}.`, wait: false, origin: { kind: 'composer' } } as never)
+    expect(entered).toBe(`deploy with ${P('PASTED_2')} and ${P('API_TOKEN')}, DB_PASSWORD=${P('PASTED_4')}; the admin password is ${P('PASTED_3')}.`)
     expect(store.vault().global.PASTED_2!.value).toBe(FAKES.stripe)
-    expect(Object.keys(store.vault().global).sort()).toEqual(['API_TOKEN', 'PASTED_1', 'PASTED_2'])
-    expect(toasts).toContain('🔐 Stored as PASTED_2 — rename, allow or undo in /secrets')
+    expect(store.vault().global.PASTED_3!.value).toBe(bare)
+    expect(store.vault().global.PASTED_4!.value).toBe(db)
+    expect(store.vault().global.PASTED_4!.allow).toEqual([])
+    expect(toasts).toContain('🔐 Stored as PASTED_2, PASTED_3, PASTED_4 — rename, allow or undo in /secrets')
     const undone = await $.command.run({ command: 'secrets', args: 'undo' } as never)
-    expect(undone.text).toBe('↩ Removed PASTED_2 from the vault.')
-    expect(store.vault().global.PASTED_2).toBeUndefined()
+    expect(undone.text).toBe('↩ Removed PASTED_2, PASTED_3, PASTED_4 from the vault.')
+    expect(Object.keys(store.vault().global).sort()).toEqual(['API_TOKEN', 'PASTED_1'])
+  })
+
+  test('a bare value in a tool result is not the person’s: it reaches the model as before, and nothing is stored', async ($, on) => {
+    const store = memStore(on, {})
+    const bare = bareFake(18)
+    const masked = await $.session.append({ message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: `the admin password is ${bare}` }] } } as never)
+    expect(JSON.stringify(masked)).not.toContain('PASTED_')
+    expect(store.raw[VAULT_KEY]).toBeUndefined()
   })
 
   test('a prompt with no secret is left as typed and stores nothing', async ($, on) => {

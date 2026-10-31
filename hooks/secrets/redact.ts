@@ -355,7 +355,39 @@ export type RedactOptions = {
   onUnknown?: (value: string, kind: string) => string | null
   /** Leave assignment lines alone (an example file). */
   skipAssignments?: boolean
+  /**
+   * The text is the person's own words (a prompt, a command's arguments), not a tool's output: context finds
+   * and assignment values go to `onUnknown` too, and a bare random value after a cue word ("the db password
+   * is …") is found as kind `cue`.
+   */
+  person?: boolean
 }
+
+/**
+ * A cue word ("password", "token", "api key", "secret", "pw"…), up to four plain words ("for the staging
+ * admin"), an optional `:` or `=` and quote, then a candidate value (group `s`, no trailing punctuation).
+ * Only the person's text is scanned this way; a candidate must still pass `looksBareSecret`.
+ */
+const CUE_RE =
+  /(?<pre>\b(?:passwords?|passwd|pass(?:phrase|code)?|pwd?|tokens?|secrets?|(?:api[ _-]?)?keys?|credentials?)\b(?:[ \t]+[A-Za-z]{1,12}){0,4}?[ \t]*[:=]?[ \t]*["'`]?)(?<s>[^\s"'`,;)]{11,255}[^\s"'`,;).!?:])/gi
+
+const GIT_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * A code identifier (`refreshOAuth2Token`, `useAuth2Token`, `getSecretV2Value`): most of its letters sit in
+ * camelCase words of 3+ letters with a vowel. A random token's letters fall in short, vowel-poor chunks.
+ */
+export const looksLikeIdentifier = (value: string): boolean => {
+  const words = value.match(/[A-Z]?[a-z]+|[A-Z]+(?![a-z])/g) ?? []
+  const letters = words.reduce((n, w) => n + w.length, 0)
+  const wordy = words.filter(w => w.length >= 3 && /[aeiouy]/i.test(w)).reduce((n, w) => n + w.length, 0)
+  return letters > 0 && wordy / letters >= 0.7
+}
+
+/** A bare value that reads as a secret: `looksSecret`, and not a git SHA, a UUID or a code identifier. */
+export const looksBareSecret = (value: string): boolean =>
+  looksSecret(value) && !GIT_SHA_RE.test(value) && !UUID_RE.test(value) && !looksLikeIdentifier(value)
 
 /**
  * Masks every secret in `text`: vault values (and their transforms) become their placeholder; known formats
@@ -376,10 +408,13 @@ export const redact = (text: string, values: Values, options: RedactOptions = {}
   }
   const mask = (value: string, pattern: SecretPattern): string => {
     if (value.startsWith(PLACEHOLDER_HEAD) || value.startsWith(REDACTED_MARK)) return value
-    const name = pattern.confidence === 'high' ? (options.onUnknown?.(value, pattern.kind) ?? null) : null
+    // A context find is vaulted only from the person's own words: in a tool's output it may not be theirs.
+    const name = pattern.confidence === 'high' || options.person ? (options.onUnknown?.(value, pattern.kind) ?? null) : null
     hits.push(name ?? pattern.kind)
     return name ? placeholder(name) : redactedMark(pattern.kind)
   }
+  /** The name `onUnknown` stores a person's value under, or null (then it is masked). */
+  const personName = (value: string, kind: string): string | null => (options.person ? (options.onUnknown?.(value, kind) ?? null) : null)
   for (const pattern of PATTERNS) {
     out = out.replace(pattern.re, (match: string, ...args: unknown[]) => {
       const groups = args.at(-1)
@@ -391,11 +426,22 @@ export const redact = (text: string, values: Values, options: RedactOptions = {}
       return `${g.pre ?? ''}${mask(g.s, pattern)}${g.post ?? ''}`
     })
   }
+  // Before assignments, so `api key: <value>.` is taken without its full stop.
+  if (options.person) {
+    out = out.replace(CUE_RE, (match: string, ...args: unknown[]) => {
+      const g = args.at(-1) as { pre: string; s: string }
+      if (!looksBareSecret(g.s)) return match
+      const name = personName(g.s, 'cue')
+      hits.push(name ?? 'value')
+      return `${g.pre}${name ? placeholder(name) : redactedMark('value')}`
+    })
+  }
   if (!options.skipAssignments) {
     out = out.replace(ASSIGNMENT_RE, (whole, key: string, bareKey: string, quote: string, value: string) => {
       if (!looksSecret(value) || isNotSecretKey(bareKey)) return whole
-      hits.push('value')
-      return `${key}${quote}${redactedMark('value')}${quote}`
+      const name = personName(value, 'value')
+      hits.push(name ?? 'value')
+      return `${key}${quote}${name ? placeholder(name) : redactedMark('value')}${quote}`
     })
   }
   return { text: out, hits }

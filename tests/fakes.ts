@@ -34,3 +34,11 @@ export const FAKES: Readonly<Record<string, string>> = {
 
 /** The kind each fake is reported as. */
 export const KIND: Readonly<Record<string, string>> = { githubPat: 'github', stripeRestricted: 'stripe' }
+
+/** A random fake with no vowels: never reads as a camelCase identifier (`looksLikeIdentifier`). */
+export const bareFake = (n: number): string => {
+  const chars = 'bcdfghjkmnpqrstvwxzBCDFGHJKLMNPQRSTVWXZ23456789'
+  let out = 'f4'
+  while (out.length < n) out += chars[Math.floor(Math.random() * chars.length)]
+  return out
+}
