@@ -12,7 +12,7 @@ Run many tasks at once with Claude Code, each in its own git worktree on its own
 them at a glance: which ticket, which branch, which PR, whether CI is red, what's running, what's ready to
 tear down.
 
-[Install](#-install) · [What you get](#-what-you-get) · [The CLI](#-the-cli-fewer-tokens-fewer-mistakes) · [Config](docs/config.md) · [CLI reference](docs/cli.md)
+[Install](#-install) · [What you get](#-what-you-get) · [The CLI](#-the-cli-fewer-tokens-fewer-mistakes) · [Config](docs/config.md) · [CLI reference](docs/cli.md) · [Secrets](docs/secrets.md)
 
 </div>
 
@@ -68,6 +68,17 @@ closed · CI turned green or red · ticket closed · tests, typecheck, lint, e2e
 test turned green** (your bug repro now passes) · a skill loaded · the Playwright browser opened, saved a
 screenshot, closed · and after a merge: *"Tear down app-712-site-offline? Close the browser and delete your
 screenshots too."*
+
+### 🔐 Secrets Claude uses without seeing
+
+Type `/secrets` to open the Secrets pane. Add a secret (a name, then its value), import a `.env` file, and
+copy, reveal (for 10 seconds), rename or delete one. Claude sees only the names. It writes
+`{{secret:STRIPE_SECRET_KEY}}` in a Bash or PowerShell command or in a file it writes, and the value is
+filled in as the tool runs. Any value that comes back in output, from any tool or subagent, reaches Claude
+as the placeholder again. Known token formats (private keys, JWTs, GitHub, npm, Stripe, Slack, AWS,
+Google) and `PASSWORD=…`-style lines are masked even when they aren't in the vault. A secret you paste
+into a prompt is stored as `PASTED_1` before Claude reads it, and you can rename it in `/secrets`.
+How it works and what it can't catch: [docs/secrets.md](docs/secrets.md).
 
 ### Dev skills
 
