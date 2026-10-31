@@ -84,9 +84,18 @@ Bundled with the plugin, written for agents, and they use the CLI:
 
 **1. The Claude Code plugin** (dashboard, status line, toasts, skills):
 
+nanoflow ships in **`nanosite`**, the nanosite.ai plugin catalog ([nanosite-ai/claude-plugins](https://github.com/nanosite-ai/claude-plugins)):
+
 ```bash
-claude plugin install nanoflow --marketplace nanosite-ai/nanoflow --scope user
+claude plugin marketplace add nanosite-ai/claude-plugins
+claude plugin install nanoflow@nanosite --scope user
 ```
+
+Or inside Claude Code: `/plugin marketplace add nanosite-ai/claude-plugins`, then `/plugin install nanoflow@nanosite`.
+
+> **Legacy id:** this repo is still its own `nanoflow` marketplace, so existing `nanoflow@nanoflow` installs keep
+> working and updating. To move to the catalog: add it as above, `/plugin install nanoflow@nanosite`, then
+> `/plugin uninstall nanoflow@nanoflow`.
 
 Install it at **user** scope so the dashboard opens in every repo. A project-scoped install only loads in the repo you
 installed it from; in other repos the pane won't open until you run `/reload-plugins`.
