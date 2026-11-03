@@ -95,8 +95,11 @@ duplicates:
 Nothing needs installing:
 
 - **Windows** shows them through PowerShell, which is built in. They appear under "Windows PowerShell".
-- **macOS** shows them through `osascript`. They appear under "Script Editor". The first time, you may need
-  to allow it in System Settings → Notifications.
+- **macOS** shows them from a small app nanoflow builds for itself, so they appear under "nanoflow" (see
+  below). The first time, macOS asks whether to allow them: the request is a banner that goes away by itself,
+  and when it goes unanswered nanoflow's notifications stay off. Turn them on in System Settings →
+  Notifications → nanoflow. Until then nanoflow sends them through `osascript` instead, under "Script
+  Editor", where a click can't open the session, and says so once a session.
 
 ### Clicking a notification brings up its session
 
@@ -115,7 +118,7 @@ does nothing. Notifications stay clickable for a week.
 - **macOS**: iTerm2 and Terminal.app. nanoflow builds itself a small app, `~/.claude/nanoflow/nanoflow.app`,
   with `osacompile`, which ships with macOS, and posts notifications from it. A click opens the app, and
   the app opens the session. Nothing to install. The first time, macOS asks to allow notifications from
-  "nanoflow", and to let it control your terminal. The app can't tell which notification was clicked, so
+  "nanoflow" (see above), and to let it control your terminal. The app can't tell which notification was clicked, so
   any click opens the session of the newest one. With
   [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) installed
   (`brew install terminal-notifier`), nanoflow uses it instead, and each notification opens its own

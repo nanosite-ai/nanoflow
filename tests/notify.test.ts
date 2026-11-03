@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import {
   categoryOf, claim, CLICK_KEEP_COUNT, CLICK_KEEP_MS, clickToken, desktopImportant, launchUri, notifyArgv, notifyLevelOf, notifyTitle, powershellFile,
-  appIsCurrent, rememberClick, shouldNotify, sourceStamp, terminalFrom, ttyPath, NOTIFY_CATEGORY, type NfCategory, type NfClicks,
+  appIsCurrent, macAppAllowed, MAC_ALLOW_HINT, rememberClick, shouldNotify, sourceStamp, terminalFrom, ttyPath, NOTIFY_CATEGORY, type NfCategory, type NfClicks,
 } from '../hooks/notify'
 
 const ok = { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
@@ -152,6 +152,59 @@ describe('desktop notification levels', () => {
   })
 })
 
+/** The macOS notification settings export, as `defaults export` prints it on macOS 26 (trimmed), with nanoflow.app's flags. */
+const macPrefs = (flags: number, bundle = 'ai.nanosite.nanoflow.notifier'): string => `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>apps</key>
+	<array>
+		<dict>
+			<key>bundle-id</key>
+			<string>com.googlecode.iterm2</string>
+			<key>flags</key>
+			<integer>41951246</integer>
+		</dict>
+		<dict>
+			<key>auth</key>
+			<integer>7</integer>
+			<key>bundle-id</key>
+			<string>${bundle}</string>
+			<key>content_visibility</key>
+			<integer>0</integer>
+			<key>flags</key>
+			<integer>${flags}</integer>
+			<key>grouping</key>
+			<integer>0</integer>
+			<key>path</key>
+			<string>/Users/me/.claude/nanoflow/nanoflow.app</string>
+			<key>src</key>
+			<array>
+				<dict>
+					<key>flags</key>
+					<integer>41951246</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>`
+
+/** nanoflow.app's flags with Allow Notifications on and off, read from System Settings on macOS 26. */
+const MAC_ON = 0x280200e
+const MAC_OFF = 0x80200e
+
+describe('macOS notification settings', () => {
+  test('the Allow Notifications switch of nanoflow.app, and nothing said when it is not listed', () => {
+    expect(macAppAllowed(macPrefs(MAC_ON))).toBe(true)
+    expect(macAppAllowed(macPrefs(MAC_OFF))).toBe(false)
+    // Another app's flags (iTerm2's, on; the src entry's, on) never stand in for nanoflow.app's.
+    expect(macAppAllowed(macPrefs(MAC_OFF, 'com.example.other'))).toBeUndefined()
+    expect(macAppAllowed(macPrefs(MAC_OFF).replace(/<key>flags<\/key>\s*<integer>8396814<\/integer>/, ''))).toBeUndefined()
+    expect(macAppAllowed(null)).toBeUndefined()
+    expect(macAppAllowed('')).toBeUndefined()
+  })
+})
+
 describe('desktop notifications in a session', () => {
   test('Claude waiting for you notifies on Windows, every ask; other notification types do not', async ($, on) => {
     mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
@@ -240,7 +293,7 @@ describe('desktop notifications in a session', () => {
   /** `app`: how nanoflow.app's build (/bin/sh) and start (open) go; by default neither works, as in a test. */
   const macSession = async (
     $: Engine, on: On, terminalNotifier: boolean,
-    app: { builds: boolean; starts: boolean; initial?: Record<string, string> } = { builds: false, starts: false },
+    app: { builds: boolean; starts: boolean; initial?: Record<string, string>; prefs?: string } = { builds: false, starts: false },
   ) => {
     const ran: string[][] = []
     mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
@@ -248,6 +301,10 @@ describe('desktop notifications in a session', () => {
     const sent = captureNotifications(on, 'Darwin', argv => {
       if (argv[0] === 'which') return terminalNotifier ? { ...ok, stdout: '/opt/homebrew/bin/terminal-notifier\n' } : { ...ok, exitCode: 1 }
       if (argv.join(' ') === 'ps -o tty= -p 777') return { ...ok, stdout: 'ttys004\n' }
+      if (argv[0] === '/usr/bin/defaults') {
+        ran.push([...argv])
+        return app.prefs && argv[2]!.endsWith('/group.com.apple.usernoted') ? { ...ok, stdout: app.prefs } : { ...ok, exitCode: 1 }
+      }
       if (argv[0] === '/bin/sh' || argv[0] === 'open') {
         ran.push([...argv])
         return (argv[0] === '/bin/sh' ? app.builds : app.starts) ? ok : { ...ok, exitCode: 1, stderr: 'no' }
@@ -331,6 +388,27 @@ describe('desktop notifications in a session', () => {
     expect(ran.filter(argv => argv[0] === '/bin/sh').length).toBe(0)
     expect(ran.filter(argv => argv[0] === 'open').length).toBe(2)
     expect(appIsCurrent(plist, 'other')).toBe(false)
+  })
+
+  test('macOS: nanoflow.app switched off in System Settings: osascript, no click link, and once how to switch it on', async ($, on) => {
+    const { sent, files, toasts, ran } = await macSession($, on, false, { builds: true, starts: true, prefs: macPrefs(MAC_OFF) })
+    expect(ran.filter(argv => argv[0] === 'open').length).toBe(0)
+    expect(sent.length).toBe(2)
+    expect(sent.every(argv => argv[0] === 'osascript')).toBe(true)
+    expect(sent.flat().join(' ')).not.toContain('nanoflow://')
+    expect(Object.keys(files).some(path => /\/pending-/.test(path))).toBe(false)
+    expect(toasts.filter(t => t.includes(MAC_ALLOW_HINT)).length).toBe(1)
+    expect(toasts.some(t => t.includes('terminal-notifier'))).toBe(false)
+    // Read through cfprefsd from the usernoted group container, under the home folder.
+    expect(ran.find(argv => argv[0] === '/usr/bin/defaults')).toEqual([
+      '/usr/bin/defaults', 'export', '/Users/me/Library/Group Containers/group.com.apple.usernoted/Library/Preferences/group.com.apple.usernoted', '-',
+    ])
+  })
+
+  test('macOS: nanoflow.app allowed in System Settings posts through the app', async ($, on) => {
+    const { sent, ran } = await macSession($, on, false, { builds: true, starts: true, prefs: macPrefs(MAC_ON) })
+    expect(sent.length).toBe(0)
+    expect(ran.filter(argv => argv[0] === 'open').length).toBe(2)
   })
 
   test('macOS: an app that will not start hands over to osascript, empties what it left, and is not tried again', async ($, on) => {

@@ -7,7 +7,7 @@ import { ACTION, DEFAULT_CONFIG, fillTemplate, mergeConfig, starterConfig, type 
 import { diffSnapshots, mergeLocal, ticketLabel, worktreeTitle, type NfEvent } from './diff'
 import {
   ATTENTION_TYPES, categoryOf, claim, clickToken, desktopImportant, IDLE_AFTER_TURN_MS, launchUri, notifyArgv, notifyLevelOf, notifyTitle, powershellFile,
-  appIsCurrent, MAC_APP, MAC_CLICK_HINT, macAppBuildArgv, macAppPostArgv, pendingName, rememberClick, shouldNotify, sourceStamp, terminalFrom, ttyPath,
+  appIsCurrent, MAC_ALLOW_HINT, MAC_APP, MAC_CLICK_HINT, MAC_NOTIFICATION_PREFS, macAppAllowed, macAppBuildArgv, macAppPostArgv, macPrefsArgv, pendingName, rememberClick, shouldNotify, sourceStamp, terminalFrom, ttyPath,
   type NfCategory, type NfClicks, type NfClickTarget, type NfMacNotifier, type NfNotifyLevel, type NfOs, type NfTerminal,
 } from './notify'
 import { statusLine } from './progress'
@@ -398,6 +398,21 @@ const macApp = async ($: $): Promise<string | null> => {
 const MAC_APP_BUILD_TIMEOUT_MS = 60_000
 
 /**
+ * Whether macOS shows nanoflow.app's notifications. When it does not (switched off, or its one-time request
+ * went unanswered), the notification goes through osascript instead, where it is seen. Read each time, as the
+ * person may switch it on mid-session; true when the settings say nothing.
+ */
+const macAppShows = async ($: $): Promise<boolean> => {
+  const home = await $.env.get('HOME')
+  if (!home) return true
+  for (const prefs of MAC_NOTIFICATION_PREFS) {
+    const allowed = macAppAllowed(await runText($, macPrefsArgv(home, prefs)))
+    if (allowed !== undefined) return allowed
+  }
+  return true
+}
+
+/**
  * Hands the notification to nanoflow.app: a pending file it posts and deletes, then the app started to post
  * it. False when the app would not start, so osascript sends it instead (the file is emptied: never posted
  * twice) and the app is not tried again this session.
@@ -441,7 +456,8 @@ const sendDesktop = async ($: $, category: NfCategory, text: string, shared: boo
   const os = await hostOs($)
   const mac = os === 'mac' ? await macNotifier($) : undefined
   // On macOS without terminal-notifier: nanoflow.app, built here once.
-  const appPath = mac && !mac.terminalNotifier ? await macApp($) : null
+  const built = mac && !mac.terminalNotifier ? await macApp($) : null
+  const appPath = built && (await macAppShows($)) ? built : null
   // A click opens the session from a Windows toast, terminal-notifier, or nanoflow.app.
   const clickable = os === 'win' || mac?.terminalNotifier === true || appPath !== null
   const launch = clickable ? await clickLaunch($, about, now).catch(() => undefined) : undefined
@@ -452,7 +468,8 @@ const sendDesktop = async ($: $, category: NfCategory, text: string, shared: boo
   if (exitCode !== 0) $.ui.log(`desktop notification failed (exit ${exitCode}): ${stderr.trim()}`, { to: 'debug' })
   if (mac && !mac.terminalNotifier && !S.macHintShown) {
     S.macHintShown = true
-    $.ui.toast(`💡 ${MAC_CLICK_HINT}`)
+    // The app works but macOS hides its notifications: the setting is what is missing, not terminal-notifier.
+    $.ui.toast(`💡 ${S.macApp ? MAC_ALLOW_HINT : MAC_CLICK_HINT}`)
   }
 }
 

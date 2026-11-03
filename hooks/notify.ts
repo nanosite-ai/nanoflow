@@ -171,6 +171,44 @@ export const pendingName = (now: number, token: string): string => `pending-${St
 /** The command that has the app post what is waiting: a new copy each time (-n), not brought forward (-g). */
 export const macAppPostArgv = (appPath: string): string[] => ['open', '-n', '-g', appPath, '--args', 'post']
 
+/** nanoflow.app's bundle id, as mac-notifier.sh sets it: the name macOS keeps its notification setting under. */
+export const MAC_APP_ID = 'ai.nanosite.nanoflow.notifier'
+
+/**
+ * Where macOS keeps each app's notification settings, under the home folder: the usernoted group container
+ * (macOS 15 and later; tried on 26), then the older ncprefs (whose copy goes stale once the first is in use).
+ */
+export const MAC_NOTIFICATION_PREFS = [
+  'Library/Group Containers/group.com.apple.usernoted/Library/Preferences/group.com.apple.usernoted',
+  'Library/Preferences/com.apple.ncprefs',
+] as const
+
+/** The command that prints one of those as XML: through cfprefsd, so it is current, not what was last flushed. */
+export const macPrefsArgv = (home: string, prefs: string): string[] => ['/usr/bin/defaults', 'export', `${home}/${prefs}`, '-']
+
+/** The "Allow notifications" switch in an app's settings `flags` (on 0x280200e, off 0x80200e, read on macOS 26). */
+const MAC_ALLOW_NOTIFICATIONS = 0x2000000
+
+/**
+ * Whether macOS lets nanoflow.app's notifications show, from one settings export: false when the person
+ * switched it off, or never answered the one-time "allow notifications" request (it shows as a banner, and goes
+ * away by itself); undefined when it is not listed or the settings cannot be read, so it is posted anyway: the
+ * first post is what makes macOS ask.
+ */
+export const macAppAllowed = (prefsXml: string | null): boolean | undefined => {
+  if (!prefsXml) return undefined
+  const at = prefsXml.search(new RegExp(`<key>bundle-id</key>\\s*<string>${MAC_APP_ID.replace(/\./g, '\\.')}</string>`))
+  if (at < 0) return undefined
+  // Its own keys come sorted after bundle-id: flags before src (whose entries carry flags of their own).
+  const rest = prefsXml.slice(at + 1)
+  const end = rest.search(/<key>(bundle-id|src)<\/key>/)
+  const flags = /<key>flags<\/key>\s*<integer>(\d+)<\/integer>/.exec(end < 0 ? rest : rest.slice(0, end))
+  return flags ? (Number(flags[1]) & MAC_ALLOW_NOTIFICATIONS) !== 0 : undefined
+}
+
+/** Said once a session when macOS keeps nanoflow.app's notifications from showing: they go through osascript. */
+export const MAC_ALLOW_HINT = 'macOS: to open the session when you click a notification, allow notifications from "nanoflow" in System Settings → Notifications'
+
 /**
  * The command that shows one notification. Title and body go in as their own arguments, never into a script's
  * source, so no quote, `$` or backtick in them is ever read as code. `launch` is what a click opens.
