@@ -267,6 +267,13 @@ describe('diff', () => {
     expect(texts).toEqual(['Worktree repo-9-y created (slot 3)', 'Worktree repo-712-x removed'])
   })
 
+  test('an event about a worktree names it, so a click opens its session; a removed one names none', () => {
+    const before = snap([wt({ pr: { number: 713, url: 'pr', state: 'OPEN', ci: 'pending', ciUrl: null } })])
+    const after = snap([wt({ pr: { number: 713, url: 'pr', state: 'OPEN', ci: 'fail', ciUrl: null } }), wt({ path: 'C:/dev/repo-9-y', name: 'repo-9-y' })])
+    expect(diffSnapshots(before, after, false).map(e => e.worktree)).toEqual([wt().path, 'C:/dev/repo-9-y'])
+    expect(diffSnapshots(snap([wt()]), snap([]), false)[0]?.worktree).toBeUndefined()
+  })
+
   test('a local poll keeps the PR and title from the last full one', () => {
     const full = snap([wt({ pr: { number: 713, url: 'pr', state: 'OPEN', ci: 'pass', ciUrl: null } })])
     const local = snap([wt({ ticket: { number: 712, title: null, url: '', state: null, status: null, worktree: 'repo-712-x' } })])

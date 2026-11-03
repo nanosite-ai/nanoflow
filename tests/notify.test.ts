@@ -1,5 +1,8 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { categoryOf, claim, desktopImportant, notifyArgv, notifyLevelOf, notifyTitle, powershellFile, shouldNotify, NOTIFY_CATEGORY, type NfCategory } from '../hooks/notify'
+import {
+  categoryOf, claim, CLICK_KEEP_COUNT, CLICK_KEEP_MS, clickToken, desktopImportant, launchUri, notifyArgv, notifyLevelOf, notifyTitle, powershellFile,
+  appIsCurrent, macAppAllowed, MAC_ALLOW_HINT, rememberClick, shouldNotify, sourceStamp, terminalFrom, ttyPath, NOTIFY_CATEGORY, type NfCategory, type NfClicks,
+} from '../hooks/notify'
 
 const ok = { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
 
@@ -7,14 +10,23 @@ const ok = { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isSt
  * Every notification command the plugin ran; `uname` names `os`, everything else fails quietly, as with no
  * git/gh. Also stands in for the engine beneath the plugin's turn and Notification hooks.
  */
-const captureNotifications = (on: Parameters<Parameters<typeof test>[1]>[1], os = 'Windows'): string[][] => {
+/** A test body's arguments: the engine and `on`. */
+type TestBody = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
+type On = Parameters<TestBody>[1]
+type Engine = Parameters<TestBody>[0]
+type RunResult = typeof ok
+
+/** `other` answers any other command (`which`, `ps`), or a notifier's own run when it should fail. */
+const captureNotifications = (on: On, os = 'Windows', other: (argv: readonly string[]) => RunResult | undefined = () => undefined): string[][] => {
   const sent: string[][] = []
   on('process.run', async (_$, e) => {
     if (e.argv[0] === 'uname') return { value: { ...ok, stdout: `${os}\n` } }
-    if (e.argv.some(a => a.endsWith('notify.ps1')) || e.argv[0] === 'osascript' || e.argv[0] === 'notify-send') {
+    const answer = other(e.argv)
+    if (e.argv.some(a => a.endsWith('notify.ps1')) || ['osascript', 'notify-send', 'terminal-notifier'].includes(e.argv[0]!)) {
       sent.push([...e.argv])
-      return { value: ok }
+      return { value: answer ?? ok }
     }
+    if (answer) return { value: answer }
     return { value: { ...ok, exitCode: 1 } }
   })
   on('turn.complete', () => ({ text: '' }))
@@ -22,6 +34,38 @@ const captureNotifications = (on: Parameters<Parameters<typeof test>[1]>[1], os 
   on('ui.status', async () => ({ value: undefined }))
   return sent
 }
+
+/** nanoflow.app's source as a test reads it: the plugin hashes it to know whether the built app is current. */
+const MAC_SOURCE = '// nanoflow.app, in a test'
+/** Its build script, part of the stamp too: what it does to the app (the icon) is part of what is built. */
+const MAC_SCRIPT = '# builds nanoflow.app, in a test'
+
+/** Files in memory for fs.read/write/list, keyed with forward slashes and no drive. */
+const fakeFiles = (on: On, initial: Record<string, string> = {}): Record<string, string> => {
+  // The drive letter dropped too: on a Windows host the engine makes /Users/me C:/Users/me.
+  const key = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
+  const files: Record<string, string> = Object.fromEntries(Object.entries(initial).map(([path, text]) => [key(path), text]))
+  on('fs.read', async (_$, e) => {
+    if (key(e.path) in files) return { value: files[key(e.path)]! }
+    if (/[\\/]hooks[\\/]mac-notifier\.js$/.test(e.path)) return { value: MAC_SOURCE }
+    if (/[\\/]hooks[\\/]mac-notifier\.sh$/.test(e.path)) return { value: MAC_SCRIPT }
+    throw new Error('ENOENT')
+  })
+  on('fs.write', async (_$, e) => {
+    files[key(e.path)] = e.text
+    return { value: undefined }
+  })
+  on('fs.list', async (_$, e) => {
+    const dir = `${key(e.path)}/`
+    const names = Object.keys(files).filter(f => f.startsWith(dir) && !f.slice(dir.length).includes('/')).map(f => f.slice(dir.length))
+    return { value: names.map(name => ({ name, kind: 'file' as const, size: files[dir + name]!.length, mtimeMs: 0, isLink: false })) }
+  })
+  return files
+}
+
+/** The clicks file, wherever the host put the home folder (a Windows host makes /Users/me C:/Users/me). */
+const clicksFile = (files: Record<string, string>): string | undefined =>
+  Object.entries(files).find(([path]) => path.endsWith('/.claude/nanoflow/clicks.json'))?.[1]
 
 /** The notification runs unawaited: let it settle. */
 const settle = async (): Promise<void> => {
@@ -68,6 +112,37 @@ describe('desktop notification levels', () => {
     )
   })
 
+  test('a click link reaches the Windows toast only; the clicks file keeps a week, at most CLICK_KEEP_COUNT', () => {
+    const uri = launchUri(clickToken(() => 0.99))
+    expect(uri).toBe('nanoflow://open/ffffffffffffffff')
+    expect(notifyArgv('win', 'C:/p', 't', 'b', uri).slice(-2)).toEqual(['-Launch', uri])
+    expect(notifyArgv('win', 'C:/p', 't', 'b')).not.toContain('-Launch')
+    const target = { sessionId: 's', path: 'C:/w', mainRoot: 'C:/m', title: 'w' }
+    const now = 10 * CLICK_KEEP_MS
+    const stored = rememberClick({ old: { ...target, at: now - CLICK_KEEP_MS }, recent: { ...target, at: now - 1000 } }, 'new', target, now)
+    expect(Object.keys(stored)).toEqual(['recent', 'new'])
+    let many = {}
+    for (let i = 0; i < CLICK_KEEP_COUNT + 5; i++) many = rememberClick(many, `t${i}`, target, now)
+    expect(Object.keys(many).length).toBe(CLICK_KEEP_COUNT)
+    expect(Object.keys(many).at(-1)).toBe(`t${CLICK_KEEP_COUNT + 4}`)
+  })
+
+  test('the terminal from the environment: bundle id, iTerm2 session id, Windows Terminal tab; malformed values left out', () => {
+    expect(terminalFrom({ bundle: 'com.apple.Terminal', iterm: 'w0t1p0:0B5C7E1A-1111-2222-3333-444455556666', wt: null })).toEqual({
+      app: 'com.apple.Terminal', iterm: '0B5C7E1A-1111-2222-3333-444455556666',
+    })
+    expect(terminalFrom({ bundle: 'x" to do shell script "rm', iterm: 'nonsense', wt: '971f7a07-c00f-44f3-bbcb-6e801c53e882' })).toEqual({
+      wt: '971f7a07-c00f-44f3-bbcb-6e801c53e882',
+    })
+    expect(ttyPath('ttys004\n')).toBe('/dev/ttys004')
+    expect(ttyPath('??')).toBeUndefined()
+    // A bundle id that is not one is never handed to terminal-notifier.
+    expect(notifyArgv('mac', '/p', 't', 'b', undefined, { terminalNotifier: true, app: 'x" & (do shell script "id") & "' })).not.toContain('-activate')
+    // The plugin's folder is quoted for the shell terminal-notifier runs -execute in.
+    expect(notifyArgv('mac', "/it's", 't', 'b', 'nanoflow://open/0123456789abcdef', { terminalNotifier: true }).at(-1))
+      .toBe("/usr/bin/osascript -l JavaScript '/it'\\''s/hooks/open-session.js' 'nanoflow://open/0123456789abcdef'")
+  })
+
   test('claim: a key is new once within the window, old keys are pruned, others stay independent', () => {
     const first = claim({}, 'service:A up', 1000, 5000)
     expect(first.isNew).toBe(true)
@@ -77,6 +152,59 @@ describe('desktop notification levels', () => {
     const later = claim(other.recent, 'service:A up', 6000, 5000)
     expect(later.isNew).toBe(true)
     expect(Object.keys(later.recent)).toEqual(['service:B up', 'service:A up'])
+  })
+})
+
+/** The macOS notification settings export, as `defaults export` prints it on macOS 26 (trimmed), with nanoflow.app's flags. */
+const macPrefs = (flags: number, bundle = 'ai.nanosite.nanoflow.notifier'): string => `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+	<key>apps</key>
+	<array>
+		<dict>
+			<key>bundle-id</key>
+			<string>com.googlecode.iterm2</string>
+			<key>flags</key>
+			<integer>41951246</integer>
+		</dict>
+		<dict>
+			<key>auth</key>
+			<integer>7</integer>
+			<key>bundle-id</key>
+			<string>${bundle}</string>
+			<key>content_visibility</key>
+			<integer>0</integer>
+			<key>flags</key>
+			<integer>${flags}</integer>
+			<key>grouping</key>
+			<integer>0</integer>
+			<key>path</key>
+			<string>/Users/me/.claude/nanoflow/nanoflow.app</string>
+			<key>src</key>
+			<array>
+				<dict>
+					<key>flags</key>
+					<integer>41951246</integer>
+				</dict>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>`
+
+/** nanoflow.app's flags with Allow Notifications on and off, read from System Settings on macOS 26. */
+const MAC_ON = 0x280200e
+const MAC_OFF = 0x80200e
+
+describe('macOS notification settings', () => {
+  test('the Allow Notifications switch of nanoflow.app, and nothing said when it is not listed', () => {
+    expect(macAppAllowed(macPrefs(MAC_ON))).toBe(true)
+    expect(macAppAllowed(macPrefs(MAC_OFF))).toBe(false)
+    // Another app's flags (iTerm2's, on; the src entry's, on) never stand in for nanoflow.app's.
+    expect(macAppAllowed(macPrefs(MAC_OFF, 'com.example.other'))).toBeUndefined()
+    expect(macAppAllowed(macPrefs(MAC_OFF).replace(/<key>flags<\/key>\s*<integer>8396814<\/integer>/, ''))).toBeUndefined()
+    expect(macAppAllowed(null)).toBeUndefined()
+    expect(macAppAllowed('')).toBeUndefined()
   })
 })
 
@@ -143,6 +271,165 @@ describe('desktop notifications in a session', () => {
     await settle()
     expect(sent.length).toBe(1)
     expect(sent[0]).toContain('nanoflow · Claude finished')
+  })
+
+  test('a Windows toast opens this session on a click: a link with a token, the token naming the session', async ($, on) => {
+    mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
+    mock.env(on, { OS: 'Windows_NT', USERPROFILE: 'C:\\Users\\me' })
+    const sent = captureNotifications(on)
+    const files = fakeFiles(on, { 'C:/Users/me/.claude/sessions/4242.json': JSON.stringify({ pid: 4242, sessionId: 'sess-1', cwd: 'C:\\proj' }) })
+    on('session.id', () => ({ value: 'sess-1' }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    await $.session.start({ cwd: 'C:/proj', surface: 'terminal', isInteractive: true })
+    await $.classic.Notification({ message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' })
+    await settle()
+    const argv = sent.at(-1)!
+    const launch = argv[argv.indexOf('-Launch') + 1]!
+    expect(launch).toMatch(/^nanoflow:\/\/open\/[0-9a-f]{16}$/)
+    const clicks = JSON.parse(clicksFile(files)!) as NfClicks
+    expect(clicks[launch.split('/').pop()!]).toMatchObject({ sessionId: 'sess-1', pid: 4242, path: 'C:/proj' })
+  })
+
+  const ITERM_ID = '0B5C7E1A-1111-2222-3333-444455556666'
+
+  /** A macOS session in iTerm2 (pid 777 on ttys004) that Claude asked for input. */
+  /** `app`: how nanoflow.app's build (/bin/sh) and start (open) go; by default neither works, as in a test. */
+  const macSession = async (
+    $: Engine, on: On, terminalNotifier: boolean,
+    app: { builds: boolean; starts: boolean; initial?: Record<string, string>; prefs?: string } = { builds: false, starts: false },
+  ) => {
+    const ran: string[][] = []
+    mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
+    mock.env(on, { HOME: '/Users/me', __CFBundleIdentifier: 'com.googlecode.iterm2', ITERM_SESSION_ID: `w0t1p0:${ITERM_ID}` })
+    const sent = captureNotifications(on, 'Darwin', argv => {
+      if (argv[0] === 'which') return terminalNotifier ? { ...ok, stdout: '/opt/homebrew/bin/terminal-notifier\n' } : { ...ok, exitCode: 1 }
+      if (argv.join(' ') === 'ps -o tty= -p 777') return { ...ok, stdout: 'ttys004\n' }
+      if (argv[0] === '/usr/bin/defaults') {
+        ran.push([...argv])
+        return app.prefs && argv[2]!.endsWith('/group.com.apple.usernoted') ? { ...ok, stdout: app.prefs } : { ...ok, exitCode: 1 }
+      }
+      if (argv[0] === '/bin/sh' || argv[0] === 'open') {
+        ran.push([...argv])
+        return (argv[0] === '/bin/sh' ? app.builds : app.starts) ? ok : { ...ok, exitCode: 1, stderr: 'no' }
+      }
+      return undefined
+    })
+    const files = fakeFiles(on, {
+      '/Users/me/.claude/sessions/777.json': JSON.stringify({ pid: 777, sessionId: 'sess-m', cwd: '/Users/me/proj' }),
+      ...app.initial,
+    })
+    const toasts: string[] = []
+    on('ui.toast', async (_$, e) => {
+      toasts.push(e.text)
+      return { value: undefined }
+    })
+    on('session.id', () => ({ value: 'sess-m' }))
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    await $.session.start({ cwd: '/Users/me/proj', surface: 'terminal', isInteractive: true })
+    await $.classic.Notification({ message: 'Claude is waiting for your input', notification_type: 'idle_prompt' })
+    await $.classic.Notification({ message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' })
+    // Building the app and handing each notification over take more turns than one settle.
+    for (let i = 0; i < 5; i++) await settle()
+    return { sent, files, toasts, ran }
+  }
+
+  test('macOS with terminal-notifier: a click runs open-session.js; the link names the session, its pid, tty and iTerm2 tab', async ($, on) => {
+    const { sent, files } = await macSession($, on, true)
+    const argv = sent.at(-1)!
+    expect(argv[0]).toBe('terminal-notifier')
+    expect(argv[argv.indexOf('-activate') + 1]).toBe('com.googlecode.iterm2')
+    const execute = argv[argv.indexOf('-execute') + 1]!
+    expect(execute).toMatch(/^\/usr\/bin\/osascript -l JavaScript '.*\/hooks\/open-session\.js' 'nanoflow:\/\/open\/[0-9a-f]{16}'$/)
+    const token = /open\/([0-9a-f]{16})/.exec(execute)![1]!
+    const clicks = JSON.parse(clicksFile(files)!) as NfClicks
+    expect(clicks[token]).toMatchObject({
+      sessionId: 'sess-m', pid: 777, path: '/Users/me/proj',
+      terminal: { app: 'com.googlecode.iterm2', iterm: ITERM_ID, tty: '/dev/ttys004' },
+    })
+  })
+
+  test('macOS with terminal-notifier says nothing about installing it', async ($, on) => {
+    const { toasts } = await macSession($, on, true)
+    expect(toasts.some(t => t.includes('terminal-notifier'))).toBe(false)
+  })
+
+  test('macOS without terminal-notifier: plain osascript, no click link, and once a session how to get clicks', async ($, on) => {
+    const { sent, files, toasts } = await macSession($, on, false)
+    expect(sent.length).toBe(2)
+    expect(sent.every(argv => argv[0] === 'osascript')).toBe(true)
+    // osascript's notifications are always Script Editor's, whatever app the script names: none named.
+    expect(sent.flat().join(' ')).not.toContain('tell application')
+    expect(sent.flat().join(' ')).not.toContain('nanoflow://')
+    expect(clicksFile(files)).toBeUndefined()
+    expect(toasts.filter(t => t.includes('brew install terminal-notifier')).length).toBe(1)
+  })
+
+  test('macOS without terminal-notifier: nanoflow.app is built once and posts each notification, which a click opens', async ($, on) => {
+    const { sent, files, toasts, ran } = await macSession($, on, false, { builds: true, starts: true })
+    expect(sent.length).toBe(0)
+    const builds = ran.filter(argv => argv[0] === '/bin/sh')
+    expect(builds.length).toBe(1)
+    expect(builds[0]![1]).toMatch(/[\\/]hooks[\\/]mac-notifier\.sh$/)
+    expect(builds[0]![2]).toMatch(/[\\/]hooks[\\/]mac-notifier\.js$/)
+    expect(builds[0]![3]).toMatch(/\/\.claude\/nanoflow\/nanoflow\.app$/)
+    const starts = ran.filter(argv => argv[0] === 'open')
+    expect(starts.length).toBe(2)
+    expect(starts[0]!.slice(0, 3)).toEqual(['open', '-n', '-g'])
+    expect(starts[0]!.slice(-2)).toEqual(['--args', 'post'])
+    const pending = Object.entries(files).filter(([path]) => /\/pending-\d{15}-[0-9a-f]{16}\.json$/.test(path)).map(([, text]) => JSON.parse(text))
+    expect(pending.length).toBe(2)
+    expect(pending[0]).toMatchObject({ title: 'nanoflow · Claude needs you', body: expect.stringContaining('waiting for your input') })
+    expect(pending[0].launch).toMatch(/^nanoflow:\/\/open\/[0-9a-f]{16}$/)
+    // The click target is recorded, as with terminal-notifier.
+    expect(JSON.parse(clicksFile(files)!)[pending[0].launch.split('/').pop()]).toMatchObject({ sessionId: 'sess-m', pid: 777 })
+    expect(toasts.some(t => t.includes('terminal-notifier'))).toBe(false)
+  })
+
+  /** A built app's Info.plist carrying `stamp`. */
+  const builtPlist = (stamp: string) => `<dict>\n\t<key>NanoflowNotifier</key>\n\t<string>${stamp}</string>\n</dict>`
+
+  test('macOS: a built app that carries the stamp of its source and build script is not built again', async ($, on) => {
+    const plist = builtPlist(sourceStamp(MAC_SOURCE + MAC_SCRIPT))
+    const { ran } = await macSession($, on, false, { builds: true, starts: true, initial: { '/Users/me/.claude/nanoflow/nanoflow.app/Contents/Info.plist': plist } })
+    expect(ran.filter(argv => argv[0] === '/bin/sh').length).toBe(0)
+    expect(ran.filter(argv => argv[0] === 'open').length).toBe(2)
+    expect(appIsCurrent(plist, 'other')).toBe(false)
+  })
+
+  test('macOS: an app built before the build script changed (a new icon) is built again', async ($, on) => {
+    const plist = builtPlist(sourceStamp(MAC_SOURCE))
+    const { ran } = await macSession($, on, false, { builds: true, starts: true, initial: { '/Users/me/.claude/nanoflow/nanoflow.app/Contents/Info.plist': plist } })
+    expect(ran.filter(argv => argv[0] === '/bin/sh').length).toBe(1)
+  })
+
+  test('macOS: nanoflow.app switched off in System Settings: osascript, no click link, and once how to switch it on', async ($, on) => {
+    const { sent, files, toasts, ran } = await macSession($, on, false, { builds: true, starts: true, prefs: macPrefs(MAC_OFF) })
+    expect(ran.filter(argv => argv[0] === 'open').length).toBe(0)
+    expect(sent.length).toBe(2)
+    expect(sent.every(argv => argv[0] === 'osascript')).toBe(true)
+    expect(sent.flat().join(' ')).not.toContain('nanoflow://')
+    expect(Object.keys(files).some(path => /\/pending-/.test(path))).toBe(false)
+    expect(toasts.filter(t => t.includes(MAC_ALLOW_HINT)).length).toBe(1)
+    expect(toasts.some(t => t.includes('terminal-notifier'))).toBe(false)
+    // Read through cfprefsd from the usernoted group container, under the home folder.
+    expect(ran.find(argv => argv[0] === '/usr/bin/defaults')).toEqual([
+      '/usr/bin/defaults', 'export', '/Users/me/Library/Group Containers/group.com.apple.usernoted/Library/Preferences/group.com.apple.usernoted', '-',
+    ])
+  })
+
+  test('macOS: nanoflow.app allowed in System Settings posts through the app', async ($, on) => {
+    const { sent, ran } = await macSession($, on, false, { builds: true, starts: true, prefs: macPrefs(MAC_ON) })
+    expect(sent.length).toBe(0)
+    expect(ran.filter(argv => argv[0] === 'open').length).toBe(2)
+  })
+
+  test('macOS: an app that will not start hands over to osascript, empties what it left, and is not tried again', async ($, on) => {
+    const { sent, files, ran } = await macSession($, on, false, { builds: true, starts: false })
+    expect(ran.filter(argv => argv[0] === 'open').length).toBe(1)
+    expect(sent.length).toBe(2)
+    expect(sent.every(argv => argv[0] === 'osascript')).toBe(true)
+    const pending = Object.entries(files).filter(([path]) => /\/pending-/.test(path)).map(([, text]) => text)
+    expect(pending).toEqual(['{}'])
   })
 
   test('a notifier that cannot start is not tried again', async ($, on) => {
