@@ -4,8 +4,11 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, UiOpenResult } from 'claude-code'
 import type { NfActivity, NfCheck, NfService, NfSnapshot, NfSource, NfTab, NfTicket, NfWorktree } from '../types'
 import { ACTION, DEFAULT_CONFIG, fillTemplate, mergeConfig, starterConfig, type NfActionKey, type NfConfig } from './config'
-import { diffSnapshots, mergeLocal, ticketLabel, type NfEvent } from './diff'
-import { categoryOf, notifyArgv, notifyLevelOf, notifyTitle, shouldNotify, type NfCategory, type NfNotifyLevel, type NfOs } from './notify'
+import { diffSnapshots, mergeLocal, ticketLabel, worktreeTitle, type NfEvent } from './diff'
+import {
+  ATTENTION_TYPES, categoryOf, claim, desktopImportant, IDLE_AFTER_TURN_MS, notifyArgv, notifyLevelOf, notifyTitle, powershellFile, shouldNotify,
+  type NfCategory, type NfNotifyLevel, type NfOs,
+} from './notify'
 import { statusLine } from './progress'
 import { browserEventOf, causeOf, CHECK_KINDS, matchRule, outputDetail, shortCommand, toastFor } from './rules'
 import {
@@ -44,10 +47,16 @@ const S = {
   scanning: null as Promise<void> | null,
   wantsFull: false,
   providerWarned: false,
-  toastLevel: 'all',
+  toastLevel: 'all' as NfNotifyLevel,
   desktopLevel: 'all' as NfNotifyLevel,
-  /** The last desktop notification and when it went: a repeat within NOTIFY_REPEAT_MS is dropped. */
-  lastNotified: { text: '', at: 0 },
+  /** False for a `-p` run, the SDK, a scheduled job: no one to notify. */
+  isInteractive: true,
+  /** Desktop notifications sent lately by this session, `category:text` → when. */
+  notified: {} as Record<string, number>,
+  notifyQueue: Promise.resolve() as Promise<void>,
+  notifierMissing: false,
+  /** When "Claude finished" last went: the idle prompt that follows it says nothing new. */
+  turnNotifiedAt: 0,
   version: undefined as string | null | undefined,
   /** The usage read in flight, and when the last one began (reads after a turn wait USAGE_GAP_MS). */
   usageReading: null as Promise<void> | null,
@@ -231,42 +240,77 @@ const refreshStatus = async ($: $): Promise<void> => {
   }))
 }
 
-const emit = async ($: $, event: NfEvent): Promise<void> => {
+/**
+ * Into the activity feed, a toast and a desktop notification, each by its own level. `shared` marks an event
+ * every open session sees (a snapshot change): one session sends its desktop notification, not each.
+ */
+const emit = async ($: $, event: NfEvent, shared = false): Promise<void> => {
   const entry: NfActivity = {
     at: await $.clock.now(), icon: event.icon, text: event.text, tone: event.tone,
     ...(event.href ? { href: event.href } : {}), ...(event.detail ? { detail: event.detail } : {}),
   }
   await update($, activityAtom, list => [...list, entry].slice(-ACTIVITY_LIMIT))
-  const wanted = S.toastLevel === 'all' || (S.toastLevel === 'important' && (event.important || event.tone === 'error'))
-  if (wanted) $.ui.toast(`${event.icon} ${event.text}${event.detail && event.tone === 'error' ? ' · full output in ⚡ Activity' : ''}`)
-  pushDesktop($, categoryOf(event), `${event.icon} ${event.text}`, event.important)
+  if (shouldNotify(S.toastLevel, categoryOf(event), event.important)) {
+    $.ui.toast(`${event.icon} ${event.text}${event.detail && event.tone === 'error' ? ' · full output in ⚡ Activity' : ''}`)
+  }
+  pushDesktop($, categoryOf(event), `${event.icon} ${event.text}`, { important: desktopImportant(event), shared })
 }
 
+/** The same notification again this soon, from this session, is dropped. */
 const NOTIFY_REPEAT_MS = 5000
+/** A shared event another session already sent this long ago is dropped (a poll is at most 5 min apart). */
+const NOTIFY_SHARED_MS = 10 * 60_000
 const NOTIFY_TIMEOUT_MS = 10_000
 
-/** Which session it came from: the focused worktree's ticket and name, else the folder. */
+/** Which session it came from: the focused worktree's title, else the folder. */
 const sessionLabel = async ($: $): Promise<string> => {
-  const snapshot = await read($, snapshotAtom)
-  const wt = snapshot?.worktrees.find(w => w.isCurrent)
-  if (wt) return wt.ticket ? `${ticketLabel(wt.ticket)} · ${wt.name}` : wt.name
-  return S.cwd ? baseName(S.cwd) : 'nanoflow'
+  const wt = (await read($, snapshotAtom))?.worktrees.find(w => w.isCurrent)
+  return wt ? worktreeTitle(wt) : S.cwd ? baseName(S.cwd) : 'nanoflow'
+}
+
+/**
+ * Claims `key` in the machine-wide list of shared notifications sent lately, so of every session that saw
+ * the event only the first sends it. A file, as every session runs in its own process.
+ */
+const claimShared = async ($: $, key: string, now: number): Promise<boolean> => {
+  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
+  if (!home) return true
+  const file = `${home.replace(/\\/g, '/')}/.claude/nanoflow/notified.json`
+  const stored = parseJson<Record<string, number>>(await $.fs.read(file).catch(() => '{}')) ?? {}
+  const { isNew, recent } = claim(stored, key, now, NOTIFY_SHARED_MS)
+  if (isNew) await $.fs.write(file, JSON.stringify(recent))
+  return isNew
+}
+
+const sendDesktop = async ($: $, category: NfCategory, text: string, shared: boolean): Promise<void> => {
+  const now = await $.clock.now()
+  const key = `${category}:${text}`
+  // Claude asking twice is two asks: never folded.
+  if (category !== 'attention') {
+    const local = claim(S.notified, key, now, NOTIFY_REPEAT_MS)
+    S.notified = local.recent
+    if (!local.isNew) return
+  }
+  if (shared && !(await claimShared($, key, now))) return
+  if (category === 'turn') S.turnNotifiedAt = now
+  // Straight to the program, never through cmd.exe: its %VAR% expansion would rewrite the text.
+  const { exitCode, stderr } = await $.process.run(notifyArgv(await hostOs($), $.plugin.root, notifyTitle(category), text), { timeoutMs: NOTIFY_TIMEOUT_MS })
+  if (exitCode !== 0) $.ui.log(`desktop notification failed (exit ${exitCode}): ${stderr.trim()}`, { to: 'debug' })
 }
 
 /**
  * A native notification outside the terminal (Windows toast, macOS Notification Center, notify-send), when
- * the desktopNotifications level takes the category. Fire and forget: a failure goes to the debug log only.
+ * the desktopNotifications level takes the category and a person is there to see it. Queued one at a time, so
+ * a burst starts no pile of processes; a notifier that cannot start is not tried again this session.
  */
-const pushDesktop = ($: $, category: NfCategory, text: string, important = false): void => {
-  if (!shouldNotify(S.desktopLevel, category, important)) return
-  void (async () => {
-    const now = await $.clock.now()
-    if (S.lastNotified.text === text && now - S.lastNotified.at < NOTIFY_REPEAT_MS) return
-    S.lastNotified = { text, at: now }
-    const argv = notifyArgv(await hostOs($), $.plugin.root, notifyTitle(category), text)
-    const { exitCode, stderr } = await runCommand($, argv, { timeoutMs: NOTIFY_TIMEOUT_MS })
-    if (exitCode !== 0) $.ui.log(`desktop notification failed (exit ${exitCode}): ${stderr.trim()}`, { to: 'debug' })
-  })().catch(error => $.ui.log(`desktop notification failed: ${String(error)}`, { to: 'debug' }))
+const pushDesktop = ($: $, category: NfCategory, text: string, { important = false, shared = false } = {}): void => {
+  if (!S.isInteractive || S.notifierMissing || !shouldNotify(S.desktopLevel, category, important)) return
+  S.notifyQueue = S.notifyQueue
+    .then(() => (S.notifierMissing ? undefined : sendDesktop($, category, text, shared)))
+    .catch(error => {
+      S.notifierMissing = true
+      $.ui.log(`desktop notifications off for this session, the notifier did not start: ${String(error)}`, { to: 'debug' })
+    })
 }
 
 // ─── config + scanning ───────────────────────────────────────────────────────────────────────────
@@ -324,7 +368,7 @@ const scan = async ($: $, full: boolean): Promise<void> => {
   const next = withFocus(full ? fresh : mergeLocal(prev, fresh), await read($, focusAtom), await isWindows($))
   const events = diffSnapshots(prev, next, await read($, browserAtom))
   await update($, snapshotAtom, () => next)
-  for (const event of events) await emit($, event)
+  for (const event of events) await emit($, event, true)
   await refreshStatus($)
 }
 
@@ -448,7 +492,7 @@ const runAction = async ($: $, key: NfActionKey, ctx: { wt?: NfWorktree; ticket?
     // Every run keeps its output on the activity entry, so a failure can be read in full from the pane.
     const detail = outputDetail(stdout, stderr)
     await emit($, exitCode === 0
-      ? { icon: '✅', text: `${label} ${subject}${lastLine ? `: ${lastLine}` : ''}`, tone: 'success', important: true, detail }
+      ? { icon: '✅', text: `${label} ${subject}${lastLine ? `: ${lastLine}` : ''}`, tone: 'success', important: true, category: 'activity', detail }
       : { icon: '❌', text: `${label} ${subject} failed: ${causeOf(`${stdout}\n${stderr}`) || `exit ${exitCode}`}`, tone: 'error', important: true, detail })
   } catch (error) {
     await emit($, { icon: '❌', text: `${label} ${subject} could not run: ${String(error)}`, tone: 'error', important: true })
@@ -484,12 +528,11 @@ const openSession = async ($: $, wt: NfWorktree): Promise<void> => {
   const start = `cd "${wt.path}" && claude`
   if (!(await isWindows($))) return copy($, start, `📋 Copied: ${start}`, `Start it with: ${start}`)
   const snapshot = await read($, snapshotAtom)
-  const argv = [
-    'powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', `${$.plugin.root}/hooks/open-session.ps1`,
-    '-Path', wt.path, '-MainRoot', snapshot?.mainRoot ?? wt.path, '-Title', wt.ticket ? `${ticketLabel(wt.ticket)} · ${wt.name}` : wt.name,
+  const argv = powershellFile($.plugin.root, 'open-session.ps1', [
+    '-Path', wt.path, '-MainRoot', snapshot?.mainRoot ?? wt.path, '-Title', worktreeTitle(wt),
     // The main checkout's branch is in too many tab titles to find its tab by.
     ...(wt.branch && !wt.isMain ? ['-Branch', wt.branch] : []),
-  ]
+  ])
   const { exitCode, stdout, stderr } = await runCommand($, argv, { timeoutMs: PROVIDER_TIMEOUT_MS }).catch(error => ({ exitCode: -1, stdout: '', stderr: String(error) }))
   const [outcome = '', id = ''] = stdout.trim().split(/\s+/)
   if (exitCode === 2) return copy($, start, `No Windows Terminal: 📋 copied ${start}`, `Start it with: ${start}`)
@@ -537,7 +580,7 @@ const openPane = ($: $, tab?: NfTab): Promise<UiOpenResult> =>
 
 
 export const register: Register = (on, options) => {
-  S.toastLevel = typeof options.toasts === 'string' ? options.toasts : 'all'
+  S.toastLevel = notifyLevelOf(options.toasts)
   S.desktopLevel = notifyLevelOf(options.desktopNotifications)
   const openPaneOnStart = options.openPaneOnStart !== false
 
@@ -546,6 +589,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     S.cwd = e.cwd
+    S.isInteractive = e.isInteractive
     await startSecrets($, e.cwd)
     await $.command.register({
       name: COMMAND,
@@ -581,7 +625,10 @@ export const register: Register = (on, options) => {
   // Claude is waiting on the person: a permission to grant, or the prompt idle. The loudest reason to look up.
   on('classic.Notification', async ($, e, next) => {
     const ran = await next(e)
-    pushDesktop($, 'attention', `🔔 ${await sessionLabel($)}: ${e.message}`, true)
+    if (!ATTENTION_TYPES.has(e.notification_type)) return ran
+    // "Claude finished" already said it is the person's turn; the idle prompt a minute later adds nothing.
+    if (e.notification_type === 'idle_prompt' && (await $.clock.now()) - S.turnNotifiedAt < IDLE_AFTER_TURN_MS) return ran
+    pushDesktop($, 'attention', `🔔 ${await sessionLabel($)}: ${e.message}`, { important: true })
     return ran
   }).catch(($, e, next) => next(e))
 

@@ -8,6 +8,9 @@ export type NfEvent = { icon: string; text: string; tone: NfTone; important: boo
 /** `#712` for a GitHub issue, else the key (`ED-712`). */
 export const ticketLabel = (t: Pick<NfTicket, 'number' | 'key'>): string => (t.key && !/^\d+$/.test(t.key) ? t.key : `#${t.number}`)
 
+/** A worktree as a session's title names it: `#712 · repo-712-x`, or the name alone with no ticket. */
+export const worktreeTitle = (wt: Pick<NfWorktree, 'name' | 'ticket'>): string => (wt.ticket ? `${ticketLabel(wt.ticket)} · ${wt.name}` : wt.name)
+
 const label = (wt: NfWorktree): string =>
   wt.ticket ? `${ticketLabel(wt.ticket)}${wt.ticket.title ? ` ${truncate(wt.ticket.title, 40)}` : ''}` : wt.name
 

@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import { categoryOf, notifyArgv, notifyLevelOf, notifyTitle, shouldNotify, NOTIFY_CATEGORY, type NfCategory } from '../hooks/notify'
+import { categoryOf, claim, desktopImportant, notifyArgv, notifyLevelOf, notifyTitle, powershellFile, shouldNotify, NOTIFY_CATEGORY, type NfCategory } from '../hooks/notify'
 
 const ok = { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
 
@@ -40,10 +40,14 @@ describe('desktop notification levels', () => {
     expect(shouldNotify('important', 'activity', true)).toBe(true)
   })
 
-  test('an error is a failure, an event with no category is activity, an unknown level is all', () => {
-    expect(categoryOf({ tone: 'error', category: 'ci' })).toBe('failure')
-    expect(categoryOf({ tone: 'success', category: 'pr' })).toBe('pr')
-    expect(categoryOf({ tone: 'info' })).toBe('activity')
+  test('an event keeps its category; an uncategorized error is a failure, the rest activity; an unknown level is all', () => {
+    expect(categoryOf({ tone: 'error', category: 'ci', important: true })).toBe('ci')
+    expect(categoryOf({ tone: 'error', important: true })).toBe('failure')
+    expect(categoryOf({ tone: 'success', category: 'pr', important: true })).toBe('pr')
+    expect(categoryOf({ tone: 'info', important: false })).toBe('activity')
+    // A repo rule marked important counts; a pane action (categorized activity) does not, though its toast does.
+    expect(desktopImportant({ tone: 'success', important: true })).toBe(true)
+    expect(desktopImportant({ tone: 'success', important: true, category: 'activity' })).toBe(false)
     expect(notifyLevelOf('important')).toBe('important')
     expect(notifyLevelOf(undefined)).toBe('all')
     expect(notifyTitle('ci')).toBe('nanoflow · CI')
@@ -59,18 +63,33 @@ describe('desktop notification levels', () => {
     expect(mac.slice(-2)).toEqual(['t', body])
     expect(mac.slice(1, -2).join(' ')).not.toContain(body)
     expect(notifyArgv('linux', '/p', 't', body)).toEqual(['notify-send', '--app-name=nanoflow', 't', body])
+    expect(powershellFile('C:/p', 'open-session.ps1', ['-Path', 'x'])).toEqual(
+      ['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', 'C:/p/hooks/open-session.ps1', '-Path', 'x'],
+    )
+  })
+
+  test('claim: a key is new once within the window, old keys are pruned, others stay independent', () => {
+    const first = claim({}, 'service:A up', 1000, 5000)
+    expect(first.isNew).toBe(true)
+    const other = claim(first.recent, 'service:B up', 2000, 5000)
+    expect(other.isNew).toBe(true)
+    expect(claim(other.recent, 'service:A up', 3000, 5000).isNew).toBe(false)
+    const later = claim(other.recent, 'service:A up', 6000, 5000)
+    expect(later.isNew).toBe(true)
+    expect(Object.keys(later.recent)).toEqual(['service:B up', 'service:A up'])
   })
 })
 
 describe('desktop notifications in a session', () => {
-  test('Claude waiting for you notifies on Windows, once for a repeat', async ($, on) => {
+  test('Claude waiting for you notifies on Windows, every ask; other notification types do not', async ($, on) => {
     mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
     mock.env(on, { OS: 'Windows_NT' })
     const sent = captureNotifications(on)
     await $.classic.Notification({ message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' })
     await $.classic.Notification({ message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' })
+    await $.classic.Notification({ message: 'Signed in', notification_type: 'auth_success' })
     await settle()
-    expect(sent.length).toBe(1)
+    expect(sent.length).toBe(2)
     expect(sent[0]).toContain('nanoflow · Claude needs you')
     expect(sent[0]?.at(-1)).toContain('Claude needs your permission to use Bash')
   })
@@ -112,5 +131,37 @@ describe('desktop notifications in a session', () => {
     await $.classic.Notification({ message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' })
     await settle()
     expect(sent.length).toBe(0)
+  })
+
+  test('the idle prompt right after "Claude finished" is not said twice', async ($, on) => {
+    mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
+    mock.env(on, { OS: 'Windows_NT' })
+    const sent = captureNotifications(on)
+    await $.turn.complete(turn)
+    await settle()
+    await $.classic.Notification({ message: 'Claude is waiting for your input', notification_type: 'idle_prompt' })
+    await settle()
+    expect(sent.length).toBe(1)
+    expect(sent[0]).toContain('nanoflow · Claude finished')
+  })
+
+  test('a notifier that cannot start is not tried again', async ($, on) => {
+    mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
+    mock.env(on, {})
+    let tries = 0
+    on('process.run', async (_$, e) => {
+      if (e.argv[0] === 'uname') return { value: { ...ok, stdout: 'Linux\n' } }
+      if (e.argv[0] === 'notify-send') {
+        tries++
+        throw new Error('spawn notify-send ENOENT')
+      }
+      return { value: { ...ok, exitCode: 1 } }
+    })
+    on('classic.Notification', () => ({ value: {} }))
+    await $.classic.Notification({ message: 'one', notification_type: 'permission_prompt' })
+    await settle()
+    await $.classic.Notification({ message: 'two', notification_type: 'permission_prompt' })
+    await settle()
+    expect(tries).toBe(1)
   })
 })

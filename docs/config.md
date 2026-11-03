@@ -84,8 +84,15 @@ installed). Each notification has a category, which is its title (`nanoflow · C
 | Ticket | a ticket closed | | ✓ |
 | Activity | rules starting or passing, skills, the browser, pane actions | | ✓ |
 
-A rule marked `"important": true` is sent at `important` as well, the same as with toasts. If the same
-notification comes again within 5 seconds, it is sent once. Nothing needs installing:
+A rule marked `"important": true` is sent at `important` as well, the same as with toasts. To avoid
+duplicates:
+
+- A repo-wide event, such as a PR merge or a CI result, is sent by only one of your open sessions.
+- If the same notification comes again within 5 seconds, it is sent once.
+- The "waiting for your input" reminder is skipped when "Claude finished" was just sent.
+- Sessions with nobody at the prompt send nothing: `claude -p`, the SDK, scheduled runs.
+
+Nothing needs installing:
 
 - **Windows** shows them through PowerShell, which is built in. They appear under "Windows PowerShell".
 - **macOS** shows them through `osascript`. They appear under "Script Editor". The first time, you may need
