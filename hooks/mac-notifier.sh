@@ -12,6 +12,7 @@ stamp="$3"
 # as osacompile makes an app only for such a name.
 building="${app%.app}.$$.building.app"
 
+mkdir -p "$(dirname "$app")"
 rm -rf "$building"
 /usr/bin/osacompile -l JavaScript -o "$building" "$source"
 plist="$building/Contents/Info.plist"
