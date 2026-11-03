@@ -140,8 +140,36 @@ export const shQuote = (text: string): string => `'${text.replace(/'/g, `'\\''`)
  */
 export type NfMacNotifier = { terminalNotifier: boolean; app?: string }
 
-/** Said once a session on macOS without terminal-notifier. */
+/** Said once a session on macOS when nanoflow.app could not be built: notifications are Script Editor's. */
 export const MAC_CLICK_HINT = 'macOS: to open the session when you click a notification (not Script Editor), run brew install terminal-notifier'
+
+/**
+ * nanoflow.app, built on the Mac from hooks/mac-notifier.js with osacompile: notifications posted by it are
+ * its own, so a click launches it and it opens the session. Nothing to install. It cannot tell which
+ * notification was clicked, so a click opens the newest one's session; terminal-notifier, when installed, can.
+ */
+export const MAC_APP = 'nanoflow.app'
+
+/** A short hash of the app's source: the stamp the built app carries, so a changed source rebuilds it. */
+export const sourceStamp = (source: string): string => {
+  let hash = 5381
+  for (let i = 0; i < source.length; i++) hash = ((hash * 33) ^ source.charCodeAt(i)) >>> 0
+  return hash.toString(16)
+}
+
+/** Whether the built app's Info.plist carries this stamp. */
+export const appIsCurrent = (infoPlist: string | null, stamp: string): boolean =>
+  infoPlist !== null && new RegExp(`<key>NanoflowNotifier</key>\\s*<string>${stamp}</string>`).test(infoPlist)
+
+/** The command that builds the app: a script of the plugin's under /bin/sh, every value its own argument. */
+export const macAppBuildArgv = (pluginRoot: string, appPath: string, stamp: string): string[] =>
+  ['/bin/sh', `${pluginRoot}/hooks/mac-notifier.sh`, `${pluginRoot}/hooks/mac-notifier.js`, appPath, stamp]
+
+/** One notification waiting for the app, named so the oldest sorts first: `pending-<ms>-<token>.json`. */
+export const pendingName = (now: number, token: string): string => `pending-${String(now).padStart(15, '0')}-${token}.json`
+
+/** The command that has the app post what is waiting: a new copy each time (-n), not brought forward (-g). */
+export const macAppPostArgv = (appPath: string): string[] => ['open', '-n', '-g', appPath, '--args', 'post']
 
 /**
  * The command that shows one notification. Title and body go in as their own arguments, never into a script's

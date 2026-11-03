@@ -7,7 +7,7 @@ import { ACTION, DEFAULT_CONFIG, fillTemplate, mergeConfig, starterConfig, type 
 import { diffSnapshots, mergeLocal, ticketLabel, worktreeTitle, type NfEvent } from './diff'
 import {
   ATTENTION_TYPES, categoryOf, claim, clickToken, desktopImportant, IDLE_AFTER_TURN_MS, launchUri, notifyArgv, notifyLevelOf, notifyTitle, powershellFile,
-  MAC_CLICK_HINT, rememberClick, shouldNotify, terminalFrom, ttyPath,
+  appIsCurrent, MAC_APP, MAC_CLICK_HINT, macAppBuildArgv, macAppPostArgv, pendingName, rememberClick, shouldNotify, sourceStamp, terminalFrom, ttyPath,
   type NfCategory, type NfClicks, type NfClickTarget, type NfMacNotifier, type NfNotifyLevel, type NfOs, type NfTerminal,
 } from './notify'
 import { statusLine } from './progress'
@@ -65,6 +65,8 @@ const S = {
   terminalNotifier: undefined as boolean | undefined,
   /** The terminal-notifier hint was shown this session. */
   macHintShown: false,
+  /** nanoflow.app's path when built and working, null when not; undefined until tried. */
+  macApp: undefined as string | null | undefined,
   version: undefined as string | null | undefined,
   /** The usage read in flight, and when the last one began (reads after a turn wait USAGE_GAP_MS). */
   usageReading: null as Promise<void> | null,
@@ -370,6 +372,50 @@ const macNotifier = async ($: $): Promise<NfMacNotifier> => {
   return { terminalNotifier: S.terminalNotifier, ...(app ? { app } : {}) }
 }
 
+/**
+ * nanoflow.app's path once it is built and current, else null (no home, no source, or the build failed: the
+ * notification goes through osascript). Built again when its source changed. Decided once a session.
+ */
+const macApp = async ($: $): Promise<string | null> => {
+  if (S.macApp !== undefined) return S.macApp
+  S.macApp = null
+  const dir = await nanoflowDir($)
+  const source = await $.fs.read(`${$.plugin.root}/hooks/mac-notifier.js`).catch(() => null)
+  if (!dir || source === null) return null
+  const appPath = `${dir}/${MAC_APP}`
+  const stamp = sourceStamp(source)
+  if (!appIsCurrent(await $.fs.read(`${appPath}/Contents/Info.plist`).catch(() => null), stamp)) {
+    const { exitCode, stderr } = await $.process.run(macAppBuildArgv($.plugin.root, appPath, stamp), { timeoutMs: MAC_APP_BUILD_TIMEOUT_MS })
+      .catch(error => ({ exitCode: -1, stderr: String(error) }))
+    if (exitCode !== 0) {
+      $.ui.log(`could not build ${MAC_APP}, notifications go through osascript: ${stderr.trim()}`, { to: 'debug' })
+      return null
+    }
+  }
+  return (S.macApp = appPath)
+}
+
+const MAC_APP_BUILD_TIMEOUT_MS = 60_000
+
+/**
+ * Hands the notification to nanoflow.app: a pending file it posts and deletes, then the app started to post
+ * it. False when the app would not start, so osascript sends it instead (the file is emptied: never posted
+ * twice) and the app is not tried again this session.
+ */
+const postWithMacApp = async ($: $, appPath: string, title: string, body: string, launch: string | undefined, now: number): Promise<boolean> => {
+  const dir = await nanoflowDir($)
+  if (!dir) return false
+  const file = `${dir}/${pendingName(now, launch?.split('/').pop() ?? clickToken(Math.random))}`
+  await $.fs.write(file, JSON.stringify({ title, body, ...(launch ? { launch, root: $.plugin.root } : {}) }))
+  const { exitCode, stderr } = await $.process.run(macAppPostArgv(appPath), { timeoutMs: NOTIFY_TIMEOUT_MS })
+    .catch(error => ({ exitCode: -1, stderr: String(error) }))
+  if (exitCode === 0) return true
+  await $.fs.write(file, '{}').catch(() => undefined)
+  $.ui.log(`${MAC_APP} did not start, notifications go through osascript: ${stderr.trim()}`, { to: 'debug' })
+  S.macApp = null
+  return false
+}
+
 /** Remembers the click target under a fresh token; the link to put on the notification, or none without a home. */
 const clickLaunch = async ($: $, about: NfWorktree | undefined, now: number): Promise<string | undefined> => {
   const dir = await nanoflowDir($)
@@ -394,10 +440,13 @@ const sendDesktop = async ($: $, category: NfCategory, text: string, shared: boo
   if (category === 'turn') S.turnNotifiedAt = now
   const os = await hostOs($)
   const mac = os === 'mac' ? await macNotifier($) : undefined
-  // A click opens the session from a Windows toast, or a macOS one through terminal-notifier.
-  const clickable = os === 'win' || mac?.terminalNotifier === true
+  // On macOS without terminal-notifier: nanoflow.app, built here once.
+  const appPath = mac && !mac.terminalNotifier ? await macApp($) : null
+  // A click opens the session from a Windows toast, terminal-notifier, or nanoflow.app.
+  const clickable = os === 'win' || mac?.terminalNotifier === true || appPath !== null
   const launch = clickable ? await clickLaunch($, about, now).catch(() => undefined) : undefined
   const title = notifyTitle(category)
+  if (appPath && (await postWithMacApp($, appPath, title, text, launch, now))) return
   // Straight to the program, never through cmd.exe: its %VAR% expansion would rewrite the text.
   const { exitCode, stderr } = await $.process.run(notifyArgv(os, $.plugin.root, title, text, launch, mac), { timeoutMs: NOTIFY_TIMEOUT_MS })
   if (exitCode !== 0) $.ui.log(`desktop notification failed (exit ${exitCode}): ${stderr.trim()}`, { to: 'debug' })

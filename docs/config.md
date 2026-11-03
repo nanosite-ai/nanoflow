@@ -112,11 +112,14 @@ does nothing. Notifications stay clickable for a week.
 
 - **Windows**: Windows Terminal. The click opens a `nanoflow://` link, which nanoflow registers for your
   Windows user the first time it sends a notification (no admin needed).
-- **macOS**: iTerm2 and Terminal.app. Clicks need [`terminal-notifier`](https://github.com/julienXX/terminal-notifier)
-  (`brew install terminal-notifier`), the notifier that can run something on a click. Without it,
-  notifications still show, but macOS credits them to Script Editor, so a click opens Script Editor;
-  nanoflow says so once per session. When the session runs in another app, such as VS Code, a click
-  brings that app forward.
+- **macOS**: iTerm2 and Terminal.app. nanoflow builds itself a small app, `~/.claude/nanoflow/nanoflow.app`,
+  with `osacompile`, which ships with macOS, and posts notifications from it. A click opens the app, and
+  the app opens the session. Nothing to install. The first time, macOS asks to allow notifications from
+  "nanoflow", and to let it control your terminal. The app can't tell which notification was clicked, so
+  any click opens the session of the newest one. With
+  [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) installed
+  (`brew install terminal-notifier`), nanoflow uses it instead, and each notification opens its own
+  session. When the session runs in another app, such as VS Code, a click brings that app forward.
 
 ## Services
 
