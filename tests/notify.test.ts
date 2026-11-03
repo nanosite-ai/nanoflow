@@ -37,6 +37,8 @@ const captureNotifications = (on: On, os = 'Windows', other: (argv: readonly str
 
 /** nanoflow.app's source as a test reads it: the plugin hashes it to know whether the built app is current. */
 const MAC_SOURCE = '// nanoflow.app, in a test'
+/** Its build script, part of the stamp too: what it does to the app (the icon) is part of what is built. */
+const MAC_SCRIPT = '# builds nanoflow.app, in a test'
 
 /** Files in memory for fs.read/write/list, keyed with forward slashes and no drive. */
 const fakeFiles = (on: On, initial: Record<string, string> = {}): Record<string, string> => {
@@ -46,6 +48,7 @@ const fakeFiles = (on: On, initial: Record<string, string> = {}): Record<string,
   on('fs.read', async (_$, e) => {
     if (key(e.path) in files) return { value: files[key(e.path)]! }
     if (/[\\/]hooks[\\/]mac-notifier\.js$/.test(e.path)) return { value: MAC_SOURCE }
+    if (/[\\/]hooks[\\/]mac-notifier\.sh$/.test(e.path)) return { value: MAC_SCRIPT }
     throw new Error('ENOENT')
   })
   on('fs.write', async (_$, e) => {
@@ -382,12 +385,21 @@ describe('desktop notifications in a session', () => {
     expect(toasts.some(t => t.includes('terminal-notifier'))).toBe(false)
   })
 
-  test('macOS: a built app that carries the source stamp is not built again', async ($, on) => {
-    const plist = `<dict>\n\t<key>NanoflowNotifier</key>\n\t<string>${sourceStamp(MAC_SOURCE)}</string>\n</dict>`
+  /** A built app's Info.plist carrying `stamp`. */
+  const builtPlist = (stamp: string) => `<dict>\n\t<key>NanoflowNotifier</key>\n\t<string>${stamp}</string>\n</dict>`
+
+  test('macOS: a built app that carries the stamp of its source and build script is not built again', async ($, on) => {
+    const plist = builtPlist(sourceStamp(MAC_SOURCE + MAC_SCRIPT))
     const { ran } = await macSession($, on, false, { builds: true, starts: true, initial: { '/Users/me/.claude/nanoflow/nanoflow.app/Contents/Info.plist': plist } })
     expect(ran.filter(argv => argv[0] === '/bin/sh').length).toBe(0)
     expect(ran.filter(argv => argv[0] === 'open').length).toBe(2)
     expect(appIsCurrent(plist, 'other')).toBe(false)
+  })
+
+  test('macOS: an app built before the build script changed (a new icon) is built again', async ($, on) => {
+    const plist = builtPlist(sourceStamp(MAC_SOURCE))
+    const { ran } = await macSession($, on, false, { builds: true, starts: true, initial: { '/Users/me/.claude/nanoflow/nanoflow.app/Contents/Info.plist': plist } })
+    expect(ran.filter(argv => argv[0] === '/bin/sh').length).toBe(1)
   })
 
   test('macOS: nanoflow.app switched off in System Settings: osascript, no click link, and once how to switch it on', async ($, on) => {

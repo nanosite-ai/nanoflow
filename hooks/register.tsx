@@ -374,7 +374,7 @@ const macNotifier = async ($: $): Promise<NfMacNotifier> => {
 
 /**
  * nanoflow.app's path once it is built and current, else null (no home, no source, or the build failed: the
- * notification goes through osascript). Built again when its source changed. Decided once a session.
+ * notification goes through osascript). Built again when its source or build script changed. Decided once a session.
  */
 const macApp = async ($: $): Promise<string | null> => {
   if (S.macApp !== undefined) return S.macApp
@@ -383,7 +383,9 @@ const macApp = async ($: $): Promise<string | null> => {
   const source = await $.fs.read(`${$.plugin.root}/hooks/mac-notifier.js`).catch(() => null)
   if (!dir || source === null) return null
   const appPath = `${dir}/${MAC_APP}`
-  const stamp = sourceStamp(source)
+  // The build script too: what it does to the app (its icon, its settings) is part of what is built.
+  const script = await $.fs.read(`${$.plugin.root}/hooks/mac-notifier.sh`).catch(() => '')
+  const stamp = sourceStamp(source + script)
   if (!appIsCurrent(await $.fs.read(`${appPath}/Contents/Info.plist`).catch(() => null), stamp)) {
     const { exitCode, stderr } = await $.process.run(macAppBuildArgv($.plugin.root, appPath, stamp), { timeoutMs: MAC_APP_BUILD_TIMEOUT_MS })
       .catch(error => ({ exitCode: -1, stderr: String(error) }))
