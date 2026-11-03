@@ -85,13 +85,16 @@ export const LinkOr = (el: PaneElements, key: string, href: string | null | unde
   return href ? <Link key={key} href={href} label={label} /> : <Text key={key} color={color} dimColor={color === undefined}>{label}</Text>
 }
 
+/** `1 session`, `3 sessions`; `many` for a word that does not just take an s. */
+export const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`
+
 /**
  * A line of token counts: `label 🪙 37.8M · in 530 · out 210k · cache read 36.7M · cache write 881k`, the
- * kinds dim. `extra` parts follow, e.g. a session count.
+ * kinds dim, then `· N sessions` when `sessions` is given.
  */
 export const Tokens = (
   el: PaneElements, key: string, label: string | null, t: NfTokens,
-  opts: { indent?: boolean | number; bold?: boolean; color?: string; extra?: Child[] } = {},
+  opts: { indent?: boolean | number; bold?: boolean; color?: string; sessions?: number } = {},
 ) => {
   const { Text } = el
   return Row(el, key, [
@@ -101,6 +104,6 @@ export const Tokens = (
     <Text key={`${key}-out`} dimColor>{`out ${formatTokens(t.output)}`}</Text>,
     <Text key={`${key}-read`} dimColor>{`cache read ${formatTokens(t.cacheRead)}`}</Text>,
     <Text key={`${key}-write`} dimColor>{`cache write ${formatTokens(t.cacheWrite)}`}</Text>,
-    ...(opts.extra ?? []),
+    opts.sessions !== undefined && <Text key={`${key}-sessions`} dimColor>{`· ${plural(opts.sessions, 'session')}`}</Text>,
   ], { indent: opts.indent })
 }

@@ -3,9 +3,10 @@
 // under `~/.claude/projects/<the folder the session started in, slugged>/<session id>.jsonl`, its
 // subagents' under `<session id>/subagents/`. A session that started in the main checkout counts for the
 // worktree its title names (the custom-title record `nf task start` writes), else for the main checkout.
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { IS_WIN } from "./proc.mjs";
 
 export const USAGE_VERSION = 1;
@@ -72,23 +73,28 @@ export const totalOf = (models: Record<string, TokenCounts>): TokenCounts => Obj
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
-export interface TranscriptUsage {
-  models: Record<string, TokenCounts>;
+/** One response: its message id (null when it has none: never matched to another), model and four counts. */
+export type Reply = [id: string | null, model: string, input: number, output: number, cacheRead: number, cacheWrite: number];
+
+export interface ParsedTranscript {
+  /** Each response once, in the order first written. */
+  replies: Reply[];
+  /** The session's last custom title, or null. */
   title: string | null;
   startedAt: string | null;
 }
 
 /**
- * Tokens one transcript records. A response is written once per content block, each copy with the same
- * message id and usage, so each id counts once (its last copy). Responses that cost nothing (the engine's
- * own `<synthetic>` notes) are left out.
+ * The responses one transcript records. A response is written once per content block, each copy with the
+ * same message id and usage, so each id is kept once (its last copy). Responses that cost nothing (the
+ * engine's own `<synthetic>` notes) are left out.
  */
-export const parseTranscript = (text: string): TranscriptUsage => {
-  const byId = new Map<string, { model: string; counts: TokenCounts }>();
+export const parseLines = (lines: Iterable<string>): ParsedTranscript => {
+  const byId = new Map<string, Reply>();
   let title: string | null = null;
   let startedAt: string | null = null;
   let anon = 0;
-  for (const line of text.split("\n")) {
+  for (const line of lines) {
     // Cheap filters first: most lines are neither a response nor a title.
     const hasUsage = line.includes('"usage"');
     const hasTitle = line.includes('"custom-title"');
@@ -108,20 +114,55 @@ export const parseTranscript = (text: string): TranscriptUsage => {
     const message = rec.message as { id?: unknown; model?: unknown; usage?: Record<string, unknown> } | undefined;
     const usage = message?.usage;
     if (!usage || typeof message?.model !== "string") continue;
-    const counts: TokenCounts = {
-      input: num(usage.input_tokens),
-      output: num(usage.output_tokens),
-      cacheRead: num(usage.cache_read_input_tokens),
-      cacheWrite: num(usage.cache_creation_input_tokens),
-      requests: 1,
-    };
-    if (counts.input + counts.output + counts.cacheRead + counts.cacheWrite === 0) continue;
-    const id = typeof message.id === "string" ? message.id : `anon-${anon++}`;
-    byId.set(id, { model: message.model, counts });
+    const reply: Reply = [
+      typeof message.id === "string" ? message.id : null,
+      message.model,
+      num(usage.input_tokens),
+      num(usage.output_tokens),
+      num(usage.cache_read_input_tokens),
+      num(usage.cache_creation_input_tokens),
+    ];
+    if (reply[2] + reply[3] + reply[4] + reply[5] === 0) continue;
+    byId.set(reply[0] ?? `\0${anon++}`, reply);
   }
+  return { replies: [...byId.values()], title, startedAt };
+};
+
+export const parseTranscript = (text: string): ParsedTranscript => parseLines(text.split("\n"));
+
+/** A file's lines, read a chunk at a time: a transcript can be larger than one string may be. */
+export function* linesOf(file: string, chunkBytes = 1 << 20): Generator<string> {
+  const fd = openSync(file, "r");
+  try {
+    const buf = Buffer.alloc(chunkBytes);
+    const decoder = new StringDecoder("utf8");
+    let rest = "";
+    for (let n = readSync(fd, buf, 0, chunkBytes, null); n > 0; n = readSync(fd, buf, 0, chunkBytes, null)) {
+      const lines = (rest + decoder.write(buf.subarray(0, n))).split("\n");
+      rest = lines.pop() ?? "";
+      yield* lines;
+    }
+    rest += decoder.end();
+    if (rest) yield rest;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * Responses as counts by model, each message id once across everything `seen` has met: a resumed or
+ * continued session's transcript repeats the responses it carries over, which count for the first session.
+ */
+export const modelsOf = (replies: readonly Reply[], seen: Set<string>): Record<string, TokenCounts> => {
   const models: Record<string, TokenCounts> = {};
-  for (const { model, counts } of byId.values()) models[model] = addCounts(models[model] ?? zeroCounts(), counts);
-  return { models, title, startedAt };
+  for (const [id, model, input, output, cacheRead, cacheWrite] of replies) {
+    if (id !== null) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    models[model] = addCounts(models[model] ?? zeroCounts(), { input, output, cacheRead, cacheWrite, requests: 1 });
+  }
+  return models;
 };
 
 /** The folder name Claude Code keeps a checkout's sessions under: every non-alphanumeric becomes `-`. */
@@ -134,7 +175,11 @@ export const titleNamesBranch = (title: string | null, branch: string | null): b
   return new RegExp(`(?<![\\w/-])${escaped}(?![\\w-])`).test(title);
 };
 
-export const claudeProjectsDir = (): string => path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), ".claude"), "projects");
+/** Claude Code's config folder: `CLAUDE_CONFIG_DIR`, else `~/.claude`. */
+export const claudeConfigDir = (): string => process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), ".claude");
+
+/** Where Claude Code keeps every session's transcript, one folder per checkout it started in. */
+export const claudeProjectsDir = (): string => path.join(claudeConfigDir(), "projects");
 
 /** The project folder for a checkout, matched without case on Windows; null when it has no sessions. */
 const projectDirFor = (projects: string, dir: string, names: readonly string[]): string | null => {
@@ -142,6 +187,56 @@ const projectDirFor = (projects: string, dir: string, names: readonly string[]):
   const hit = names.find((n) => (IS_WIN ? n.toLowerCase() === slug.toLowerCase() : n === slug));
   return hit ? path.join(projects, hit) : null;
 };
+
+const CACHE_VERSION = 1;
+type CacheEntry = { mtimeMs: number; size: number; parsed: ParsedTranscript };
+type Cache = { version: typeof CACHE_VERSION; files: Record<string, CacheEntry> };
+
+/**
+ * Parsed transcripts, kept between runs by file, mtime and size: the pane asks after every turn, and only
+ * the transcripts written since are read again. A cache that cannot be read starts empty.
+ */
+class TranscriptCache {
+  private readonly old: Record<string, CacheEntry>;
+  private readonly next: Record<string, CacheEntry> = {};
+
+  constructor(private readonly file: string | null) {
+    let old: Record<string, CacheEntry> = {};
+    try {
+      const data = file && existsSync(file) ? (JSON.parse(readFileSync(file, "utf8")) as Cache) : null;
+      if (data?.version === CACHE_VERSION && data.files) old = data.files;
+    } catch {
+      old = {};
+    }
+    this.old = old;
+  }
+
+  /** A transcript's responses, or null when it cannot be read (gone mid-scan, unreadable). */
+  read(file: string): ParsedTranscript | null {
+    try {
+      const { mtimeMs, size } = statSync(file);
+      const hit = this.old[file];
+      const entry = hit && hit.mtimeMs === mtimeMs && hit.size === size ? hit : { mtimeMs, size, parsed: parseLines(linesOf(file)) };
+      this.next[file] = entry;
+      return entry.parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Keeps only the transcripts this run met. */
+  save(): void {
+    if (!this.file) return;
+    try {
+      mkdirSync(path.dirname(this.file), { recursive: true });
+      writeFileSync(this.file, JSON.stringify({ version: CACHE_VERSION, files: this.next } satisfies Cache));
+    } catch {
+      // A cache is only a shortcut.
+    }
+  }
+}
+
+export const defaultCacheFile = (): string => path.join(claudeConfigDir(), "nanoflow", "usage-cache.json");
 
 interface Transcript {
   id: string;
@@ -151,25 +246,44 @@ interface Transcript {
 
 const transcriptsIn = (dir: string | null, sinceMs: number): Transcript[] => {
   if (!dir) return [];
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
   const out: Transcript[] = [];
-  for (const name of readdirSync(dir)) {
+  for (const name of names) {
     if (!name.endsWith(".jsonl")) continue;
     const file = path.join(dir, name);
-    const { mtimeMs } = statSync(file);
-    if (mtimeMs >= sinceMs) out.push({ id: name.slice(0, -".jsonl".length), file, mtimeMs });
+    try {
+      const { mtimeMs } = statSync(file);
+      if (mtimeMs >= sinceMs) out.push({ id: name.slice(0, -".jsonl".length), file, mtimeMs });
+    } catch {
+      // Gone since the listing.
+    }
   }
   return out;
 };
 
-/** One session: its transcript and its subagents' summed. */
-export const readSession = (t: Transcript): SessionUsage => {
-  const main = parseTranscript(readFileSync(t.file, "utf8"));
+interface ReadSession {
+  t: Transcript;
+  main: ParsedTranscript;
+  subs: ParsedTranscript[];
+}
+
+/** A session's own transcript and its subagents', parsed; null when its transcript cannot be read. */
+const readSession = (t: Transcript, cache: TranscriptCache): ReadSession | null => {
+  const main = cache.read(t.file);
+  if (!main) return null;
   const subDir = path.join(path.dirname(t.file), t.id, "subagents");
-  const subs = existsSync(subDir)
-    ? readdirSync(subDir).filter((n) => n.endsWith(".jsonl")).map((n) => parseTranscript(readFileSync(path.join(subDir, n), "utf8")).models)
-    : [];
-  const models = mergeModels([main.models, ...subs]);
-  return { id: t.id, title: main.title, startedAt: main.startedAt, updatedAt: new Date(t.mtimeMs).toISOString(), models, total: totalOf(models) };
+  let subs: ParsedTranscript[] = [];
+  try {
+    if (existsSync(subDir)) subs = readdirSync(subDir).filter((n) => n.endsWith(".jsonl")).flatMap((n) => cache.read(path.join(subDir, n)) ?? []);
+  } catch {
+    subs = [];
+  }
+  return { t, main, subs };
 };
 
 export interface UsageTree {
@@ -181,53 +295,73 @@ export interface UsageTree {
 
 /**
  * Every worktree's sessions. A worktree counts its own folder's sessions and the main checkout's sessions
- * titled with its branch, both from when it was made; the main checkout keeps the rest of its own, from
- * `days` ago.
+ * titled with its branch since it was made; the main checkout keeps the rest of its own from `days` ago.
+ * A response repeated in several transcripts (a resumed session) counts once, for the earliest session.
  */
-export const collectUsage = (trees: readonly UsageTree[], opts: { days: number; now?: number; projects?: string }): UsageSnapshot => {
+export const collectUsage = (
+  trees: readonly UsageTree[],
+  opts: { days: number; now?: number; projects?: string; cacheFile?: string | null },
+): UsageSnapshot => {
   const now = opts.now ?? Date.now();
   const projects = opts.projects ?? claudeProjectsDir();
+  const cache = new TranscriptCache(opts.cacheFile === undefined ? defaultCacheFile() : opts.cacheFile);
   const names = existsSync(projects) ? readdirSync(projects) : [];
-  const main = trees.find((t) => t.isMain);
   const mainSince = now - opts.days * 86_400_000;
+  // Birth time only: a folder's ctime moves whenever an entry in it changes. Without one, every session counts.
   const created = (t: UsageTree): number => {
-    if (!existsSync(t.path)) return now;
-    const st = statSync(t.path);
-    return st.birthtimeMs || st.ctimeMs;
-  };
-  const others = trees.filter((t) => !t.isMain);
-  const oldest = Math.min(mainSince, ...others.map(created));
-  const mainDir = main ? projectDirFor(projects, main.path, names) : null;
-  const mainSessions = transcriptsIn(mainDir, oldest).map((t) => ({ t, s: readSession(t) }));
-  const claimed = new Set<string>();
-  const result: WorktreeUsage[] = trees.map((tree) => {
-    let sessions: SessionUsage[];
-    if (tree.isMain) sessions = [];
-    else {
-      const since = created(tree);
-      const own = transcriptsIn(projectDirFor(projects, tree.path, names), since).map(readSession);
-      const fromMain = mainSessions.filter(({ t, s }) => t.mtimeMs >= since && titleNamesBranch(s.title, tree.branch)).map(({ s }) => s);
-      for (const s of fromMain) claimed.add(s.id);
-      sessions = [...own, ...fromMain];
+    try {
+      return statSync(t.path).birthtimeMs || 0;
+    } catch {
+      return now;
     }
-    return { name: tree.name, path: tree.path, branch: tree.branch, sessions, models: {}, total: zeroCounts() };
-  });
-  const mainUsage = main ? result[trees.indexOf(main)] : undefined;
-  if (mainUsage) mainUsage.sessions = mainSessions.filter(({ t, s }) => t.mtimeMs >= mainSince && !claimed.has(s.id)).map(({ s }) => s);
-  for (const r of result) {
-    r.sessions = r.sessions.filter((s) => s.total.requests > 0).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    r.models = mergeModels(r.sessions.map((s) => s.models));
-    r.total = totalOf(r.models);
+  };
+  const main = trees.find((t) => t.isMain);
+  const since = new Map(trees.map((t) => [t, t.isMain ? mainSince : created(t)]));
+  const read = (list: Transcript[]): ReadSession[] => list.flatMap((t) => readSession(t, cache) ?? []);
+  const mainDir = main ? projectDirFor(projects, main.path, names) : null;
+  const fromMain = read(transcriptsIn(mainDir, Math.min(mainSince, ...since.values())));
+  const own = new Map(trees.filter((t) => !t.isMain).map((t) => [t, read(transcriptsIn(projectDirFor(projects, t.path, names), 0))]));
+  cache.save();
+
+  // Each response counts once, for the oldest session that has it.
+  const all = [...fromMain, ...[...own.values()].flat()].sort(
+    (a, b) => (a.main.startedAt ?? "").localeCompare(b.main.startedAt ?? "") || a.t.mtimeMs - b.t.mtimeMs,
+  );
+  const seen = new Set<string>();
+  const usageOf = new Map<ReadSession, SessionUsage>();
+  for (const r of all) {
+    const models = mergeModels([modelsOf(r.main.replies, seen), ...r.subs.map((s) => modelsOf(s.replies, seen))]);
+    usageOf.set(r, { id: r.t.id, title: r.main.title, startedAt: r.main.startedAt, updatedAt: new Date(r.t.mtimeMs).toISOString(), models, total: totalOf(models) });
   }
-  const models = mergeModels(result.map((r) => r.models));
-  return { version: USAGE_VERSION, generatedAt: new Date(now).toISOString(), worktrees: result, models, total: totalOf(models) };
+  const sessions = (list: ReadSession[]): SessionUsage[] => list.flatMap((r) => usageOf.get(r) ?? []);
+
+  const claimed = new Set<ReadSession>();
+  const sessionsFor = new Map<UsageTree, SessionUsage[]>();
+  for (const tree of trees) {
+    if (tree.isMain) continue;
+    const from = since.get(tree) ?? 0;
+    const titled = fromMain.filter((r) => r.t.mtimeMs >= from && titleNamesBranch(r.main.title, tree.branch));
+    for (const r of titled) claimed.add(r);
+    sessionsFor.set(tree, sessions([...(own.get(tree) ?? []), ...titled]));
+  }
+  if (main) sessionsFor.set(main, sessions(fromMain.filter((r) => r.t.mtimeMs >= mainSince && !claimed.has(r))));
+
+  const worktrees: WorktreeUsage[] = trees.map((tree) => {
+    const list = (sessionsFor.get(tree) ?? []).filter((s) => s.total.requests > 0).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const models = mergeModels(list.map((s) => s.models));
+    return { name: tree.name, path: tree.path, branch: tree.branch, sessions: list, models, total: totalOf(models) };
+  });
+  const models = mergeModels(worktrees.map((w) => w.models));
+  return { version: USAGE_VERSION, generatedAt: new Date(now).toISOString(), worktrees, models, total: totalOf(models) };
 };
 
-/** 950, 12.3k, 4.56M: short enough for a dashboard row. */
+/** 950, 12.3k, 4.56M: short enough for a dashboard row; rounded first, then placed (999,800 is 1.00M, not 1000k). */
 export const formatTokens = (n: number): string => {
   if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
-  return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 2 : 1)}M`;
+  const k = n / 1000;
+  if (Number(k.toFixed(k < 10 ? 1 : 0)) < 1000) return Number(k.toFixed(1)) < 10 ? `${k.toFixed(1)}k` : `${k.toFixed(0)}k`;
+  const m = n / 1_000_000;
+  return Number(m.toFixed(2)) < 10 ? `${m.toFixed(2)}M` : `${m.toFixed(1)}M`;
 };
 
 /** `claude-opus-5-5` → `opus-5-5`. */

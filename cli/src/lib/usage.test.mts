@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import { collectUsage, formatTokens, parseTranscript, projectSlug, titleNamesBranch } from "./usage.mjs";
+import { collectUsage, formatTokens, linesOf, modelsOf, parseTranscript, projectSlug, titleNamesBranch } from "./usage.mjs";
 
 const reply = (id: string, model: string, u: Partial<Record<"input_tokens" | "output_tokens" | "cache_read_input_tokens" | "cache_creation_input_tokens", number>>, ts = "2026-11-01T10:00:00Z"): string =>
   JSON.stringify({ type: "assistant", timestamp: ts, message: { id, model, role: "assistant", content: [], usage: { input_tokens: 0, output_tokens: 0, ...u } } });
@@ -23,7 +23,7 @@ describe("usage: one transcript", () => {
       title("#7 · feat/7-x · x"),
     ].join("\n");
     const got = parseTranscript(text);
-    expect(got.models).toEqual({
+    expect(modelsOf(got.replies, new Set())).toEqual({
       "claude-opus-5-5": { input: 5, output: 110, cacheRead: 3000, cacheWrite: 50, requests: 2 },
       "claude-haiku-5-5": { input: 400, output: 20, cacheRead: 0, cacheWrite: 0, requests: 1 },
     });
@@ -39,6 +39,14 @@ describe("usage: one transcript", () => {
 
   test("short counts for a dashboard", () => {
     expect([950, 1234, 45_600, 1_234_567, 37_800_000].map(formatTokens)).toEqual(["950", "1.2k", "46k", "1.23M", "37.8M"]);
+    // Rounded first, then placed: never 1000k, 10.0k or 10.00M.
+    expect([9_990, 999_800, 9_996_000].map(formatTokens)).toEqual(["10k", "1.00M", "10.0M"]);
+  });
+
+  test("a file is read a chunk at a time, lines and multi-byte characters kept whole across chunks", () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "nf-lines-")), "t.jsonl");
+    writeFileSync(file, "ab🪙cd\nsecond\n\nlast");
+    expect([...linesOf(file, 3)]).toEqual(["ab🪙cd", "second", "", "last"]);
   });
 });
 
@@ -70,7 +78,7 @@ describe("usage: sessions per worktree", () => {
         { name: "repo", path: mainPath, branch: "main", isMain: true },
         { name: "repo-7-x", path: wtPath, branch: "feat/7-x", isMain: false },
       ],
-      { days: 7, now: now + 1000, projects },
+      { days: 7, now: now + 1000, projects, cacheFile: null },
     );
     const [main, wt] = snap.worktrees;
     expect(main?.sessions.map((s) => s.id)).toEqual(["b-main"]);
@@ -80,5 +88,35 @@ describe("usage: sessions per worktree", () => {
     expect(wt?.total).toEqual({ input: 7, output: 110, cacheRead: 0, cacheWrite: 0, requests: 3 });
     expect(snap.total.output).toBe(111);
     expect(snap.models["claude-haiku-5-5"]?.input).toBe(7);
+  });
+
+  test("a resumed session's repeated responses count once, for the first session; an unreadable transcript is skipped; the cache gives the same", () => {
+    const base = mkdtempSync(path.join(tmpdir(), "nf-usage-"));
+    const projects = path.join(base, "projects");
+    const mainPath = path.join(base, "repo");
+    mkdirSync(mainPath);
+    const mainDir = path.join(projects, projectSlug(mainPath));
+    mkdirSync(mainDir, { recursive: true });
+    // The resumed session carries r1 over (same first timestamp), then answers once more; it was written last.
+    const at = (file: string, ms: number): void => utimesSync(file, new Date(ms), new Date(ms));
+    const first = path.join(mainDir, "zz-first.jsonl");
+    const resumed = path.join(mainDir, "aa-resumed.jsonl");
+    writeFileSync(first, reply("r1", "claude-opus-5-5", { output_tokens: 10 }, "2026-11-01T10:00:00Z"));
+    writeFileSync(resumed, [
+      reply("r1", "claude-opus-5-5", { output_tokens: 10 }, "2026-11-01T10:00:00Z"),
+      reply("r2", "claude-opus-5-5", { output_tokens: 5 }, "2026-11-02T10:00:00Z"),
+    ].join("\n"));
+    at(first, Date.now() - 60_000);
+    at(resumed, Date.now());
+    // A folder named like a transcript cannot be read as one.
+    mkdirSync(path.join(mainDir, "broken.jsonl"));
+    const trees = [{ name: "repo", path: mainPath, branch: "main", isMain: true }];
+    const cacheFile = path.join(base, "cache", "usage.json");
+    const run = () => collectUsage(trees, { days: 7, projects, cacheFile });
+    const once = run();
+    const outputs = Object.fromEntries(once.worktrees[0]!.sessions.map((s) => [s.id, s.total.output]));
+    expect(outputs).toEqual({ "zz-first": 10, "aa-resumed": 5 });
+    expect(once.total.output).toBe(15);
+    expect(run()).toMatchObject({ worktrees: once.worktrees, total: once.total });
   });
 });

@@ -11,7 +11,7 @@ import {
   applyFlowResult, baseName, buildFlowQuery, focusFrom, isInside, isSnapshot, normalizePath, parseJson, parseWorktreeList, quoteForCmd, samePath, serviceUrl,
   featureOf, slugFromRemote, ticketKeyOf, ticketNumber, ticketUrl, withFocus, type GitWorktree, type GqlRepo,
 } from './scan'
-import { isUsage } from './usage'
+import { isUsage, usageCommands } from './usage'
 import { PaneView, type PaneHandlers } from './view'
 import { registerSecrets, secretCount, startSecrets } from './secrets/register'
 
@@ -48,6 +48,10 @@ const S = {
   /** The usage read in flight, and when the last one began (reads after a turn wait USAGE_GAP_MS). */
   usageReading: null as Promise<void> | null,
   usageAt: 0,
+  /** The usage command that answered last; null to try each in turn. */
+  usageArgv: null as readonly string[] | null,
+  /** No usage command answered: reads after a turn wait for the next full refresh. */
+  usageMissing: false,
 }
 
 // ─── host I/O: git, gh, the provider, liveness probes ($ cannot cross an import, so it all lives here) ──
@@ -285,27 +289,42 @@ const scan = async ($: $, full: boolean): Promise<void> => {
   await refreshStatus($)
 }
 
-/** The CLI that counts each session's tokens from the transcripts; its absence shows no usage. */
-const USAGE_ARGV = ['nanoflow', 'usage', '--json'] as const
 const USAGE_GAP_MS = 30_000
+/** Off the scan lock, so a slow first read (no cache yet, months of transcripts) delays nothing. */
+const USAGE_TIMEOUT_MS = 120_000
 
 /**
- * Each session's tokens, from `nanoflow usage --json` (transcripts are often over the 4 MiB one read
- * takes, so the CLI reads them). One read at a time; `soon` skips a read within USAGE_GAP_MS of the last.
+ * Each session's tokens, from `<cli> usage --json` (transcripts are often over the 4 MiB one read takes, so
+ * the CLI reads them): the provider's CLI first, then `nanoflow`. One read at a time; `soon` (after a turn)
+ * skips a read within USAGE_GAP_MS of the last, and any read while no CLI answered: a full refresh tries again.
  */
 const refreshUsage = ($: $, soon = false): Promise<void> => {
   if (S.usageReading) return S.usageReading
   S.usageReading = (async () => {
     try {
       const now = await $.clock.now()
-      if (soon && now - S.usageAt < USAGE_GAP_MS) return
+      if (soon && (S.usageMissing || now - S.usageAt < USAGE_GAP_MS)) return
       S.usageAt = now
       const where = (await read($, snapshotAtom))?.mainRoot ?? S.cwd
-      const out = await runText($, [...USAGE_ARGV], where)
-      const parsed = parseJson<unknown>(out)
-      if (isUsage(parsed)) await update($, usageAtom, () => parsed)
-    } catch (error) {
-      $.ui.log(`nanoflow: usage failed: ${String(error)}`, { to: 'debug' })
+      const reasons: string[] = []
+      for (const argv of S.usageArgv ? [S.usageArgv] : usageCommands(S.config.provider?.snapshot)) {
+        const ran = await runCommand($, argv, { cwd: where, timeoutMs: USAGE_TIMEOUT_MS }).catch(error => ({ exitCode: -1, stdout: '', stderr: String(error) }))
+        const parsed = ran.exitCode === 0 ? parseJson<unknown>(ran.stdout) : null
+        if (isUsage(parsed)) {
+          S.usageArgv = argv
+          S.usageMissing = false
+          await update($, usageAtom, () => parsed)
+          return
+        }
+        // A snapshot that does not parse may have been cut at the 4 MiB stdout limit: say so rather than nothing.
+        const why = ran.exitCode === 0
+          ? `printed no usage snapshot (${ran.stdout.length} chars${ran.stdout.length >= 4_000_000 ? ', cut at the 4 MiB output limit' : ''})`
+          : `exit ${ran.exitCode}: ${(ran.stderr || ran.stdout).trim().split('\n').pop() ?? ''}`
+        reasons.push(`${argv.join(' ')} ${why}`)
+      }
+      S.usageArgv = null
+      if (!S.usageMissing) $.ui.log(`nanoflow: no token usage: ${reasons.join('; ')}`, { to: 'debug' })
+      S.usageMissing = true
     } finally {
       S.usageReading = null
     }
@@ -322,7 +341,7 @@ const refresh = ($: $, full: boolean): Promise<void> => {
   S.scanning = (async () => {
     try {
       await scan($, full)
-      if (full) await refreshUsage($)
+      if (full) void refreshUsage($)
     } catch (error) {
       $.ui.log(`nanoflow: scan failed: ${String(error)}`, { to: 'debug' })
     } finally {
@@ -523,6 +542,7 @@ export const register: Register = (on, options) => {
     const arg = e.args.trim().toLowerCase()
     if (arg === 'refresh') {
       await refresh($, true)
+      await refreshUsage($)
       const snapshot = await read($, snapshotAtom)
       return { text: `nanoflow refreshed: ${snapshot?.worktrees.length ?? 0} worktrees.` }
     }

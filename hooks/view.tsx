@@ -76,6 +76,8 @@ const STAGE_LOOK: Record<StageState, Look> = {
   todo: { icon: '○', color: COLOR.muted },
 }
 
+const SESSION_LOOK: Look = { icon: '💬', color: COLOR.info }
+
 const SERVICE_LOOK = { up: { icon: '●', color: COLOR.ok }, down: { icon: '○', color: COLOR.muted } } as const
 
 const TONE: Record<NfActivity['tone'], string | undefined> = { error: COLOR.bad, success: COLOR.ok, warning: COLOR.wait, info: undefined }
@@ -126,8 +128,6 @@ const Tabs = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
 const Stages = (el: PaneElements, key: string, wt: NfWorktree, checks: PaneData['checks']) =>
   Row(el, key, stagesOf(wt, checks).map(st => Mark(el, `${key}-${st.key}`, STAGE_LOOK[st.state], st.label)), { indent: true })
 
-const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
-
 /**
  * A worktree's tokens: one line summed over its sessions; open, each session (newest first) with a line
  * per model it used.
@@ -137,14 +137,14 @@ const Usage = (el: PaneElements, data: PaneData, k: (part: string) => string, us
   const width = Math.max(20, data.columns - 30)
   return (
     <Box key={k('usage')} flexDirection="column">
-      {Tokens(el, k('usage-total'), null, usage.total, { indent: true, extra: [<Text key={k('usage-sessions')} dimColor>{`· ${plural(usage.sessions.length, 'session')}`}</Text>] })}
+      {Tokens(el, k('usage-total'), null, usage.total, { indent: true, sessions: usage.sessions.length })}
       {isOpen && usage.sessions.map(s => {
         const sk = k(`usage-${s.id}`)
         const models = byModel(s.models)
         return (
           <Box key={sk} flexDirection="column">
             {Row(el, `${sk}-head`, [
-              <Text key={`${sk}-id`} color={COLOR.info}>{`💬 ${s.id.slice(0, 8)}`}</Text>,
+              Mark(el, `${sk}-id`, SESSION_LOOK, ` ${s.id.slice(0, 8)}`),
               s.title && <Text key={`${sk}-title`}>{truncate(s.title, width)}</Text>,
               <Text key={`${sk}-ago`} dimColor>{ago(data.now, s.updatedAt)}</Text>,
             ], { indent: 2 })}
@@ -245,13 +245,13 @@ const Fleet = (el: PaneElements, data: PaneData, on: PaneHandlers, snapshot: NfS
 
 /** Every session's tokens summed, by model when there are several, under the cards. */
 const UsageTotal = (el: PaneElements, usage: NfUsage | null) => {
-  const { Box, Text } = el
+  const { Box } = el
   if (!usage || usage.total.requests === 0) return null
   const sessions = usage.worktrees.reduce((n, u) => n + u.sessions.length, 0)
   const models = byModel(usage.models)
   return (
     <Box key="usage-all" flexDirection="column" paddingX={2}>
-      {Tokens(el, 'usage-all-total', 'Σ All sessions', usage.total, { bold: true, color: COLOR.current, extra: [<Text key="usage-all-count" dimColor>{`· ${plural(sessions, 'session')}`}</Text>] })}
+      {Tokens(el, 'usage-all-total', 'Σ All sessions', usage.total, { bold: true, color: COLOR.current, sessions })}
       {models.length > 1 && models.map(([model, t]) => Tokens(el, `usage-all-${model}`, shortModel(model), t, { indent: true }))}
     </Box>
   )

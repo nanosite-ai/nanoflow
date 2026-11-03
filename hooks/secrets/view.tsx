@@ -4,7 +4,7 @@
 // attention, then the add and import forms, folded until wanted. Pure: every handler is passed in. What it draws is the person's
 // screen alone; none of it reaches the model.
 import type { NfSecret, NfSecretScope, NfSecretsNote } from '../../types'
-import { COLOR, Fold, type Look, Mark, type PaneElements, Row } from '../ui'
+import { COLOR, Fold, type Look, Mark, type PaneElements, plural, Row } from '../ui'
 
 export type SecretsForm = 'add' | 'import' | 'none'
 
@@ -79,8 +79,6 @@ const POLICY_LOOK = {
 const SHOWN_USES = 2
 
 const baseName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? path
-
-const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
 
 /** `curl, api.stripe.com +2`. */
 const usesShort = (allow: readonly string[]): string =>

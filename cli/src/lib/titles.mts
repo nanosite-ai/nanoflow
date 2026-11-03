@@ -3,13 +3,13 @@
 // session's transcript. The terminal tab is set with an escape sequence, or on Windows by attaching to the
 // console of the Claude process.
 import { appendFileSync, existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { fillTemplate, type FlowConfig } from "./config.mjs";
 import { tempFile } from "./globals.mjs";
 import { c, info, step } from "./output.mjs";
 import { IS_WIN, tryRun } from "./proc.mjs";
 import { ticketRef } from "./tickets.mjs";
+import { claudeProjectsDir } from "./usage.mjs";
 
 export const SEP = " · ";
 
@@ -22,7 +22,7 @@ export const withPr = (base: string, pr: number | string, merged = false): strin
 /** Append a custom-title record to the calling session's transcript. False when there is no session. */
 export const renameSession = (title: string, sessionId = process.env.CLAUDE_CODE_SESSION_ID): boolean => {
   if (!sessionId) return false;
-  const root = path.join(process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), ".claude"), "projects");
+  const root = claudeProjectsDir();
   if (!existsSync(root)) return false;
   // Search every project dir: the session may have started in another checkout than the cwd.
   const transcript = readdirSync(root).map((d) => path.join(root, d, `${sessionId}.jsonl`)).find((f) => existsSync(f));
