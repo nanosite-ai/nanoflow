@@ -189,6 +189,7 @@ const projectDirFor = (projects: string, dir: string, names: readonly string[]):
 };
 
 const CACHE_VERSION = 1;
+const CREATED_SLACK_MS = 1000;
 type CacheEntry = { mtimeMs: number; size: number; parsed: ParsedTranscript };
 type Cache = { version: typeof CACHE_VERSION; files: Record<string, CacheEntry> };
 
@@ -308,9 +309,12 @@ export const collectUsage = (
   const names = existsSync(projects) ? readdirSync(projects) : [];
   const mainSince = now - opts.days * 86_400_000;
   // Birth time only: a folder's ctime moves whenever an entry in it changes. Without one, every session counts.
+  // A second early: birth times can be finer than mtimes (APFS: below a millisecond), so a session written in
+  // the same moment the worktree was made would otherwise read as older than it.
   const created = (t: UsageTree): number => {
     try {
-      return statSync(t.path).birthtimeMs || 0;
+      const born = statSync(t.path).birthtimeMs;
+      return born ? born - CREATED_SLACK_MS : 0;
     } catch {
       return now;
     }
