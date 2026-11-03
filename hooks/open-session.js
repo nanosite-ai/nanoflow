@@ -75,7 +75,12 @@ function run(argv) {
     for (const window of iterm.windows()) {
       for (const tab of window.tabs()) {
         for (const session of tab.sessions()) {
-          if ((id && session.uniqueId() === id) || (tty && session.tty() === tty)) {
+          // iTerm2 calls its unique id `id` (the UUID in ITERM_SESSION_ID); a session that will not say is
+          // skipped, never the end of the search.
+          const ask = property => {
+            try { return session[property]() } catch (e) { return undefined }
+          }
+          if ((id && ask('id') === id) || (tty && ask('tty') === tty)) {
             window.select()
             tab.select()
             session.select()
