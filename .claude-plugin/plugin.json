@@ -28,6 +28,17 @@
         "off"
       ]
     },
+    "desktopNotifications": {
+      "type": "string",
+      "title": "Desktop notifications",
+      "description": "Native Windows/macOS notifications outside the terminal: all, important (Claude needs you, PRs, CI, worktrees, failures) or off.",
+      "default": "all",
+      "options": [
+        "all",
+        "important",
+        "off"
+      ]
+    },
     "secretsAllowTrackedWrites": {
       "type": "boolean",
       "title": "Secrets: allow writing into tracked files",
