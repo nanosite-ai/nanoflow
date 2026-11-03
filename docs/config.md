@@ -114,8 +114,9 @@ does nothing. Notifications stay clickable for a week.
   Windows user the first time it sends a notification (no admin needed).
 - **macOS**: iTerm2 and Terminal.app. Clicks need [`terminal-notifier`](https://github.com/julienXX/terminal-notifier)
   (`brew install terminal-notifier`), the notifier that can run something on a click. Without it,
-  notifications come from your terminal app instead of Script Editor, so a click brings your terminal
-  forward but doesn't pick the tab. In another app, such as VS Code, a click brings that app forward.
+  notifications still show, but macOS credits them to Script Editor, so a click opens Script Editor;
+  nanoflow says so once per session. When the session runs in another app, such as VS Code, a click
+  brings that app forward.
 
 ## Services
 

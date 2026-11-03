@@ -133,11 +133,15 @@ export const rememberClick = (stored: Readonly<NfClicks>, token: string, target:
 export const shQuote = (text: string): string => `'${text.replace(/'/g, `'\\''`)}'`
 
 /**
- * How macOS shows it. `terminalNotifier`: the `terminal-notifier` tool is installed, the one way a click can
- * run something. `app`: the terminal's bundle id; the notification is raised as that app (osascript) or a
- * click brings it forward (terminal-notifier), so a click never opens Script Editor.
+ * How macOS shows it. `terminalNotifier`: the `terminal-notifier` tool is installed, the one way a click can do
+ * something: osascript's notifications are always Script Editor's, so a click on one opens Script Editor
+ * (even inside `tell application id …`, tried on macOS). `app`: the terminal's bundle id, which a
+ * terminal-notifier click brings forward should the session's tab not be found.
  */
 export type NfMacNotifier = { terminalNotifier: boolean; app?: string }
+
+/** Said once a session on macOS without terminal-notifier. */
+export const MAC_CLICK_HINT = 'macOS: to open the session when you click a notification (not Script Editor), run brew install terminal-notifier'
 
 /**
  * The command that shows one notification. Title and body go in as their own arguments, never into a script's
@@ -156,8 +160,7 @@ export const notifyArgv = (
         ...(launch ? ['-execute', `/usr/bin/osascript -l JavaScript ${shQuote(`${pluginRoot}/hooks/open-session.js`)} ${shQuote(launch)}`] : []),
       ]
     }
-    const show = 'display notification (item 2 of argv) with title (item 1 of argv)'
-    return ['osascript', '-e', 'on run argv', '-e', app ? `tell application id "${app}" to ${show}` : show, '-e', 'end run', title, body]
+    return ['osascript', '-e', 'on run argv', '-e', 'display notification (item 2 of argv) with title (item 1 of argv)', '-e', 'end run', title, body]
   }
   return ['notify-send', '--app-name=nanoflow', title, body]
 }

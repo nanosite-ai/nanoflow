@@ -126,8 +126,8 @@ describe('desktop notification levels', () => {
     })
     expect(ttyPath('ttys004\n')).toBe('/dev/ttys004')
     expect(ttyPath('??')).toBeUndefined()
-    // A bundle id that is not one never reaches the AppleScript source.
-    expect(notifyArgv('mac', '/p', 't', 'b', undefined, { terminalNotifier: false, app: 'x" & (do shell script "id") & "' }).join(' ')).not.toContain('tell')
+    // A bundle id that is not one is never handed to terminal-notifier.
+    expect(notifyArgv('mac', '/p', 't', 'b', undefined, { terminalNotifier: true, app: 'x" & (do shell script "id") & "' })).not.toContain('-activate')
     // The plugin's folder is quoted for the shell terminal-notifier runs -execute in.
     expect(notifyArgv('mac', "/it's", 't', 'b', 'nanoflow://open/0123456789abcdef', { terminalNotifier: true }).at(-1))
       .toBe("/usr/bin/osascript -l JavaScript '/it'\\''s/hooks/open-session.js' 'nanoflow://open/0123456789abcdef'")
@@ -230,22 +230,27 @@ describe('desktop notifications in a session', () => {
   const ITERM_ID = '0B5C7E1A-1111-2222-3333-444455556666'
 
   /** A macOS session in iTerm2 (pid 777 on ttys004) that Claude asked for input. */
-  const macSession = async ($: Parameters<Parameters<typeof test>[1]>[0], on: On, terminalNotifier: boolean, appRefuses = false) => {
+  const macSession = async ($: Parameters<Parameters<typeof test>[1]>[0], on: On, terminalNotifier: boolean) => {
     mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
     mock.env(on, { HOME: '/Users/me', __CFBundleIdentifier: 'com.googlecode.iterm2', ITERM_SESSION_ID: `w0t1p0:${ITERM_ID}` })
     const sent = captureNotifications(on, 'Darwin', argv => {
       if (argv[0] === 'which') return terminalNotifier ? { ...ok, stdout: '/opt/homebrew/bin/terminal-notifier\n' } : { ...ok, exitCode: 1 }
       if (argv.join(' ') === 'ps -o tty= -p 777') return { ...ok, stdout: 'ttys004\n' }
-      if (appRefuses && argv[0] === 'osascript' && argv.some(a => a.includes('tell application id'))) return { ...ok, exitCode: 1, stderr: 'not allowed' }
       return undefined
     })
     const files = fakeFiles(on, { '/Users/me/.claude/sessions/777.json': JSON.stringify({ pid: 777, sessionId: 'sess-m', cwd: '/Users/me/proj' }) })
+    const toasts: string[] = []
+    on('ui.toast', async (_$, e) => {
+      toasts.push(e.text)
+      return { value: undefined }
+    })
     on('session.id', () => ({ value: 'sess-m' }))
     on('session.start', (_$, e) => ({ cwd: e.cwd }))
     await $.session.start({ cwd: '/Users/me/proj', surface: 'terminal', isInteractive: true })
     await $.classic.Notification({ message: 'Claude is waiting for your input', notification_type: 'idle_prompt' })
+    await $.classic.Notification({ message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' })
     await settle()
-    return { sent, files }
+    return { sent, files, toasts }
   }
 
   test('macOS with terminal-notifier: a click runs open-session.js; the link names the session, its pid, tty and iTerm2 tab', async ($, on) => {
@@ -263,20 +268,20 @@ describe('desktop notifications in a session', () => {
     })
   })
 
-  test('macOS without terminal-notifier: raised as the terminal app, never Script Editor, with no click link', async ($, on) => {
-    const { sent, files } = await macSession($, on, false)
-    expect(sent.length).toBe(1)
-    expect(sent[0]?.[0]).toBe('osascript')
-    expect(sent[0]).toContain('tell application id "com.googlecode.iterm2" to display notification (item 2 of argv) with title (item 1 of argv)')
-    expect(sent[0]?.join(' ')).not.toContain('nanoflow://')
-    expect(clicksFile(files)).toBeUndefined()
+  test('macOS with terminal-notifier says nothing about installing it', async ($, on) => {
+    const { toasts } = await macSession($, on, true)
+    expect(toasts.some(t => t.includes('terminal-notifier'))).toBe(false)
   })
 
-  test('macOS: when the terminal app will not raise it, plain osascript does', async ($, on) => {
-    const { sent } = await macSession($, on, false, true)
+  test('macOS without terminal-notifier: plain osascript, no click link, and once a session how to get clicks', async ($, on) => {
+    const { sent, files, toasts } = await macSession($, on, false)
     expect(sent.length).toBe(2)
-    expect(sent[1]).toContain('display notification (item 2 of argv) with title (item 1 of argv)')
-    expect(sent[1]?.join(' ')).not.toContain('tell application')
+    expect(sent.every(argv => argv[0] === 'osascript')).toBe(true)
+    // osascript's notifications are always Script Editor's, whatever app the script names: none named.
+    expect(sent.flat().join(' ')).not.toContain('tell application')
+    expect(sent.flat().join(' ')).not.toContain('nanoflow://')
+    expect(clicksFile(files)).toBeUndefined()
+    expect(toasts.filter(t => t.includes('brew install terminal-notifier')).length).toBe(1)
   })
 
   test('a notifier that cannot start is not tried again', async ($, on) => {

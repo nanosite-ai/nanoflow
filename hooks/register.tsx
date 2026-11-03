@@ -7,7 +7,7 @@ import { ACTION, DEFAULT_CONFIG, fillTemplate, mergeConfig, starterConfig, type 
 import { diffSnapshots, mergeLocal, ticketLabel, worktreeTitle, type NfEvent } from './diff'
 import {
   ATTENTION_TYPES, categoryOf, claim, clickToken, desktopImportant, IDLE_AFTER_TURN_MS, launchUri, notifyArgv, notifyLevelOf, notifyTitle, powershellFile,
-  rememberClick, shouldNotify, terminalFrom, ttyPath,
+  MAC_CLICK_HINT, rememberClick, shouldNotify, terminalFrom, ttyPath,
   type NfCategory, type NfClicks, type NfClickTarget, type NfMacNotifier, type NfNotifyLevel, type NfOs, type NfTerminal,
 } from './notify'
 import { statusLine } from './progress'
@@ -63,6 +63,8 @@ const S = {
   terminal: undefined as NfTerminal | undefined,
   /** Whether macOS has terminal-notifier; undefined until asked. */
   terminalNotifier: undefined as boolean | undefined,
+  /** The terminal-notifier hint was shown this session. */
+  macHintShown: false,
   version: undefined as string | null | undefined,
   /** The usage read in flight, and when the last one began (reads after a turn wait USAGE_GAP_MS). */
   usageReading: null as Promise<void> | null,
@@ -397,11 +399,12 @@ const sendDesktop = async ($: $, category: NfCategory, text: string, shared: boo
   const launch = clickable ? await clickLaunch($, about, now).catch(() => undefined) : undefined
   const title = notifyTitle(category)
   // Straight to the program, never through cmd.exe: its %VAR% expansion would rewrite the text.
-  const run = (argv: string[]) => $.process.run(argv, { timeoutMs: NOTIFY_TIMEOUT_MS })
-  let { exitCode, stderr } = await run(notifyArgv(os, $.plugin.root, title, text, launch, mac))
-  // An app that will not raise it (not scriptable, or not allowed yet): as osascript itself, as before.
-  if (exitCode !== 0 && mac?.app && !mac.terminalNotifier) ({ exitCode, stderr } = await run(notifyArgv(os, $.plugin.root, title, text)))
+  const { exitCode, stderr } = await $.process.run(notifyArgv(os, $.plugin.root, title, text, launch, mac), { timeoutMs: NOTIFY_TIMEOUT_MS })
   if (exitCode !== 0) $.ui.log(`desktop notification failed (exit ${exitCode}): ${stderr.trim()}`, { to: 'debug' })
+  if (mac && !mac.terminalNotifier && !S.macHintShown) {
+    S.macHintShown = true
+    $.ui.toast(`💡 ${MAC_CLICK_HINT}`)
+  }
 }
 
 /**
