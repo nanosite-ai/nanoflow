@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
-import type { NfSnapshot, NfWorktree } from '../types'
+import type { NfSnapshot, NfTokens, NfUsage, NfWorktree } from '../types'
 
 const PANE = {
   component: 'Pane',
@@ -215,6 +215,86 @@ describe('dashboard pane: teardown', () => {
     expect(asked).toEqual(['Teardown 2 done: repo-7-dark-mode, repo-8-search?'])
     const removed = runs.filter(argv => argv.slice(0, 3).join(' ') === 'git worktree remove').map(argv => argv[3])
     expect(removed).toEqual([merged.path, closed.path])
+    await ui.unmount()
+  })
+
+  test("each card sums its sessions' tokens; open, it splits them per session and model; the total sits under the cards", async ($, on) => {
+    mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
+    mock.env(on, {})
+    const wt = tree('repo-7-dark-mode', 'In progress')
+    const idle = tree('repo-8-search', 'In progress')
+    const snapshot: NfSnapshot = { version: 1, generatedAt: '2026-10-07T10:00:00Z', mainRoot: 'C:/dev/repo', current: null, worktrees: [wt, idle], board: null }
+    const t = (input: number, output: number, cacheRead: number, cacheWrite: number): NfTokens => ({ input, output, cacheRead, cacheWrite, requests: 3 })
+    const opus = t(500, 20_000, 1_200_000, 30_000)
+    const haiku = t(2_000, 1_000, 40_000, 5_000)
+    const sum = t(2_500, 21_000, 1_240_000, 35_000)
+    const usage: NfUsage = {
+      version: 1, generatedAt: '2026-10-07T10:00:00Z', models: { 'claude-opus-5-5': opus, 'claude-haiku-5-5': haiku }, total: sum,
+      worktrees: [{
+        name: wt.name, path: wt.path, branch: wt.branch, models: { 'claude-opus-5-5': opus, 'claude-haiku-5-5': haiku }, total: sum,
+        sessions: [{ id: 'abcdef1234', title: '#7 · feat/repo-7-dark-mode', startedAt: null, updatedAt: '2026-10-07T08:00:00Z', models: { 'claude-haiku-5-5': haiku, 'claude-opus-5-5': opus }, total: sum }],
+      }],
+    }
+    on('state.get', ($, e, next) => {
+      if (e.plugin === 'nanoflow' && e.key === 'snapshot') return { value: { version: 1, value: snapshot } }
+      if (e.plugin === 'nanoflow' && e.key === 'usage') return { value: { version: 1, value: usage } }
+      return next(e)
+    })
+    const ui = await $.ui.mount({ plugin: 'nanoflow', surface: 'terminal', ...PANE })
+    const texts = async (): Promise<string[]> => (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
+    // Closed, the card shows the sum alone; the worktree with no sessions draws no usage line.
+    let shown = await texts()
+    expect(shown.filter(t => t === '🪙 1.30M')).toHaveLength(2)
+    expect(shown).toContain('· 1 session')
+    expect(shown).toContain('cache read 1.24M')
+    expect(shown).not.toContain('💬 abcdef12')
+    await ui.press({ key: `select-${wt.path}` })
+    shown = await texts()
+    expect(shown).toContain('💬 abcdef12')
+    expect(shown).toContain('2h ago')
+    // Open: the session's sum over both models, then each model, most-spending first, with its four kinds.
+    const at = (text: string): number => shown.indexOf(text)
+    expect(at('all models')).toBeGreaterThan(at('💬 abcdef12'))
+    expect(at('opus-5-5')).toBeGreaterThan(at('all models'))
+    expect(at('haiku-5-5')).toBeGreaterThan(at('opus-5-5'))
+    expect(shown.slice(at('opus-5-5'), at('opus-5-5') + 6)).toEqual(['opus-5-5', '🪙 1.25M', 'in 500', 'out 20k', 'cache read 1.20M', 'cache write 30k'])
+    // Under the cards: every session summed, then each model.
+    const all = at('Σ All sessions')
+    expect(all).toBeGreaterThan(at('haiku-5-5'))
+    expect(shown.slice(all, all + 7)).toEqual(['Σ All sessions', '🪙 1.30M', 'in 2.5k', 'out 21k', 'cache read 1.24M', 'cache write 35k', '· 1 session'])
+    expect(shown.slice(all + 7, all + 9)).toEqual(['opus-5-5', '🪙 1.25M'])
+    await ui.unmount()
+  })
+  test('a full refresh reads `nanoflow usage --json` from the main checkout and draws it; without the CLI nothing shows', async ($, on) => {
+    mock.clock(on, { now: Date.parse('2026-10-07T10:00:00Z') })
+    mock.env(on, {})
+    const porcelain = 'worktree C:/dev/repo\nHEAD 1\nbranch refs/heads/main\n\nworktree C:/dev/repo-712-x\nHEAD 2\nbranch refs/heads/feat/712-x\n'
+    const tokens = { input: 10, output: 2_000, cacheRead: 90_000, cacheWrite: 8_000, requests: 4 }
+    const usage = {
+      version: 1, generatedAt: '2026-10-07T10:00:00Z', models: { 'claude-opus-5-5': tokens }, total: tokens,
+      worktrees: [{ name: 'repo-712-x', path: 'C:/dev/repo-712-x', branch: 'feat/712-x', models: { 'claude-opus-5-5': tokens }, total: tokens,
+        sessions: [{ id: 's1', title: null, startedAt: null, updatedAt: '2026-10-07T09:00:00Z', models: { 'claude-opus-5-5': tokens }, total: tokens }] }],
+    }
+    let hasCli = false
+    const asked: Array<{ argv: string[]; cwd?: string }> = []
+    on('process.run', async (_$, e) => {
+      const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+      if (e.argv.join(' ') === 'nanoflow usage --json') {
+        asked.push({ argv: [...e.argv], cwd: e.init?.cwd })
+        return hasCli ? ok(JSON.stringify(usage)) : { value: { exitCode: 1, stdout: '', stderr: 'not found', isStdoutTruncated: false, isStderrTruncated: false } }
+      }
+      if (e.argv.includes('worktree')) return ok(porcelain)
+      return { value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    })
+    on('ui.status', async () => ({ value: undefined }))
+    const ui = await $.ui.mount({ plugin: 'nanoflow', surface: 'terminal', ...PANE })
+    await $.command.run({ command: 'nanoflow', args: 'refresh' })
+    expect(asked.at(-1)).toEqual({ argv: ['nanoflow', 'usage', '--json'], cwd: 'C:/dev/repo' })
+    expect(await ui.find({ type: 'Text', text: /🪙/ })).toBeUndefined()
+    hasCli = true
+    await $.command.run({ command: 'nanoflow', args: 'refresh' })
+    expect(await ui.find({ type: 'Text', text: '🪙 100k' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Σ All sessions' })).toBeDefined()
     await ui.unmount()
   })
 })

@@ -6,7 +6,8 @@ import { prForBranch, PR_STATE } from "../lib/gh.mjs";
 import { c, info, result, warn } from "../lib/output.mjs";
 import { runShellCapture, tail } from "../lib/proc.mjs";
 import { isMainCheckout, requireRepo } from "../lib/repo.mjs";
-import { portOf, slotOf } from "../lib/worktree.mjs";
+import { collectUsage, formatTokens, shortModel, type TokenCounts, type UsageSnapshot } from "../lib/usage.mjs";
+import { listWorktrees, portOf, slotOf } from "../lib/worktree.mjs";
 import { ticketOf, ticketRef, ticketUrl } from "../lib/tickets.mjs";
 
 export const registerCheck = (program: Command): void => {
@@ -119,5 +120,44 @@ export const registerSummary = (program: Command): void => {
       else if (next.length > 1) lines.push(`**Next:**\n${next.map((n) => `* ${n}`).join("\n")}`);
       if (!opts.what) warn("pass --what for the one-line gist");
       result({ ...fields, local, what: opts.what ?? null, next, text: lines.join("\n") }, () => console.log(lines.join("\n")));
+    });
+};
+
+const countsLine = (t: TokenCounts): string =>
+  `${formatTokens(t.input + t.output + t.cacheRead + t.cacheWrite)} tokens  ${c.dim(`in ${formatTokens(t.input)} · out ${formatTokens(t.output)} · cache read ${formatTokens(t.cacheRead)} · cache write ${formatTokens(t.cacheWrite)} · ${t.requests} requests`)}`;
+
+const renderUsage = (snap: UsageSnapshot): void => {
+  for (const wt of snap.worktrees) {
+    if (!wt.sessions.length) continue;
+    info(`${c.bold(wt.name)}  ${countsLine(wt.total)}`);
+    for (const s of wt.sessions) {
+      info(`  ${c.cyan(s.id.slice(0, 8))} ${s.title ?? ""}`);
+      info(`    ${countsLine(s.total)}`);
+      for (const [model, counts] of Object.entries(s.models)) info(`    ${c.dim(shortModel(model).padEnd(18))} ${countsLine(counts)}`);
+    }
+  }
+  info(c.bold("\nTotal"));
+  for (const [model, counts] of Object.entries(snap.models)) info(`  ${c.dim(shortModel(model).padEnd(18))} ${countsLine(counts)}`);
+  info(`  ${"all".padEnd(18)} ${countsLine(snap.total)}`);
+};
+
+export const registerUsage = (program: Command): void => {
+  program
+    .command("usage")
+    .description("tokens each Claude Code session spent, per worktree: input, output, cache read, cache write, by model, with totals")
+    .option("--days <n>", "how far back the main checkout's own sessions go", "7")
+    .addHelpText("after", "\nExamples:\n  nf usage\n  nf usage --json\n  nf usage --days 30")
+    .action((opts: { days: string }) => {
+      const repo = requireRepo();
+      const days = Number(opts.days);
+      if (!Number.isFinite(days) || days < 0) throw new Error(`--days takes a number of days, not "${opts.days}"`);
+      const trees = listWorktrees(repo.config, repo.mainRoot).map((t) => ({
+        name: path.basename(t.path),
+        path: t.path,
+        branch: t.branch ?? null,
+        isMain: path.resolve(t.path) === path.resolve(repo.mainRoot),
+      }));
+      const snap = collectUsage(trees, { days });
+      result(snap, () => renderUsage(snap));
     });
 };

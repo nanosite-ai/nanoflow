@@ -6,6 +6,7 @@ import { stagesOf, statusLine } from '../hooks/progress'
 import { browserEventOf, causeOf, DETAIL_LINES, matchRule, outputDetail, toastFor } from '../hooks/rules'
 import { applyFlowResult, buildFlowQuery, ciRollup, focusFrom, parseWorktreeList, slugFromRemote, ticketKeyOf, withFocus } from '../hooks/scan'
 import { COLOR, folderUrl, isDone, isPickable, statusColor } from '../hooks/view'
+import { formatTokens, usageCommands } from '../hooks/usage'
 
 const wt = (over: Partial<NfWorktree> = {}): NfWorktree => ({
   name: 'repo-712-x',
@@ -283,5 +284,19 @@ describe('progress', () => {
     expect(statusLine({ snapshot: snap([w]), checks: {}, running: 'tests', skill: null }))
       .toBe('#712 site offline │ ✓ticket ✓branch ✓code ○checks ✓PR #713 ✗CI ○merged │ 1 worktree │ ⏳ tests')
     expect(statusLine({ snapshot: null, checks: {}, running: null, skill: null })).toBe('nanoflow · scanning…')
+  })
+})
+
+describe('token usage', () => {
+  test('short counts, rounded before they are placed', () => {
+    expect([950, 1234, 9_990, 45_600, 999_800, 1_234_567, 9_996_000, 37_800_000].map(formatTokens))
+      .toEqual(['950', '1.2k', '10k', '46k', '1.00M', '1.23M', '10.0M', '37.8M'])
+  })
+
+  test("usage comes from the provider's own CLI first, then nanoflow", () => {
+    expect(usageCommands(undefined)).toEqual([['nanoflow', 'usage', '--json']])
+    expect(usageCommands(['nanoflow', 'flow', '--json'])).toEqual([['nanoflow', 'usage', '--json']])
+    expect(usageCommands(['npx', 'nanoflow', 'flow', '--json'])).toEqual([['npx', 'nanoflow', 'usage', '--json'], ['nanoflow', 'usage', '--json']])
+    expect(usageCommands(['./bin/snapshot.sh'])).toEqual([['nanoflow', 'usage', '--json']])
   })
 })

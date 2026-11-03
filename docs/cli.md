@@ -32,6 +32,7 @@ Every command takes `--json` (result on stdout, progress on stderr), `--dry` (pr
 | [`nanoflow ci`](#nanoflow-ci) | PR checks: status, --watch until done (no poll loops), the failing jobs' log tails, rerun failed |
 | [`nanoflow flow`](#nanoflow-flow) | one snapshot of every worktree (slot, services up, ticket, PR, CI) and the open tickets; the nanoflow mod's provider |
 | [`nanoflow summary`](#nanoflow-summary) | the wrap-up footer for the current task, from live state: worktree, branch, PR, ticket, done, local URL |
+| [`nanoflow usage`](#nanoflow-usage) | tokens each Claude Code session spent, per worktree: input, output, cache read, cache write, by model, with totals |
 | [`nanoflow init`](#nanoflow-init) | write a starter .claude/nanoflow.json from what the repo has (scripts, lockfile, .env files); --team also offers the mod to teammates |
 | [`nanoflow doctor`](#nanoflow-doctor) | check what nanoflow relies on: git, gh + auth, the config, the repo slug, the board, the Jira login |
 | [`nanoflow docs`](#nanoflow-docs) | print (or --write docs/cli.md) the reference for every command |
@@ -538,6 +539,24 @@ Options:
 Examples:
   nf summary --what "csv export for orders" --next "review + merge"
   nf summary --next "tear down" "watch errors" --json
+```
+
+### nanoflow usage
+
+```text
+Usage: nanoflow usage [options]
+
+tokens each Claude Code session spent, per worktree: input, output, cache read, cache write, by
+model, with totals
+
+Options:
+  --days <n>  how far back the main checkout's own sessions go (default: "7")
+  -h, --help  display help for command
+
+Examples:
+  nf usage
+  nf usage --json
+  nf usage --days 30
 ```
 
 ### nanoflow init

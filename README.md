@@ -51,6 +51,9 @@ It works in the Claude desktop app too:
 - **Everything is a link**: the ticket, the PR, the failing CI run, each running service, the worktree folder.
 - **Select a worktree for actions**: ▶ Pick up its ticket (Claude moves it to In progress and plans the
   work; offered until it's under way), 🚀 Start dev, ■ Stop, 🌐 Open app, 🔀 Open PR, 📋 Copy path, and 🧹 Teardown (offered once its PR is merged, or its ticket is closed or Done on the board with no PR open; it asks first). A done card shows 🧹 Teardown on its title too, and the summary line's **🧹 Tear down N done** tears them all down after one question.
+- **🪙 Tokens per session**: each card sums the tokens its Claude sessions spent (input, output, cache read,
+  cache write); select it to see each session split per model, subagents included. The sum of every session,
+  per model, sits under the cards. Counted from the session transcripts by `nf usage --json` (needs the CLI).
 - **Tickets tab**: your board's Ready / In progress / In review columns. ▶ Start a ticket (the agent runs
   the kickoff), jump to the worktree already on it, or create a new one.
 - **Activity tab**: the last 50 moments, linked.
@@ -199,6 +202,7 @@ tested, the same every time.
 | Review comments | `nf pr comments` · `--reply <id> --body "…"` |
 | PR merged | `nf task done` |
 | Everything at once | `nf flow` (`--json` is the dashboard's feed) |
+| Tokens each session spent, per worktree and model | `nf usage` (`--json` feeds the pane's 🪙 lines) |
 | The wrap-up footer | `nf summary --what "…" --next "…"` |
 
 Full reference: [docs/cli.md](docs/cli.md).
