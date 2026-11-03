@@ -72,6 +72,13 @@ test turned green** (your bug repro now passes) · a skill loaded · the Playwri
 screenshot, closed · and after a merge: *"Tear down app-712-site-offline? Close the browser and delete your
 screenshots too."*
 
+### Desktop notifications, outside the terminal
+
+Native Windows and macOS notifications, so you see them in another window: **Claude needs you**,
+**Claude finished**, CI, PRs, worktrees and failures. Each one is labeled with its category. The
+`desktopNotifications` setting sends all of them (the default), only the important ones, or none. See
+[config](docs/config.md#desktop-notifications).
+
 ### 🔐 Secrets Claude uses without seeing
 
 Type `/secrets` to open the Secrets pane. There you can add a secret for this project or for all projects,

@@ -62,8 +62,34 @@ committing anything).
 | `rules[]` | none | Your own Bash command → toast rules, tried before the built-in ones. `{ "match": "\\bmake deploy\\b", "label": "deploy", "kind": "ship", "toast": { "ok": "Deployed 🚀", "fail": "Deploy failed" }, "rescan": "full", "important": true }` |
 | `actions` | plain git / gh | The pane's buttons; see below. |
 
-Personal settings (not in the repo) are in the plugin's options: `toasts` (`all` / `important` / `off`) and
-`openPaneOnStart`.
+Personal settings (not in the repo) are in the plugin's options: `toasts` (`all` / `important` / `off`),
+`desktopNotifications` (`all` / `important` / `off`, see below) and `openPaneOnStart`.
+
+## Desktop notifications
+
+nanoflow also sends native OS notifications, so you see them when you're not looking at the terminal: a
+Windows toast in Action Center, or a banner in macOS Notification Center (`notify-send` on Linux, when it's
+installed). Each notification has a category, which is its title (`nanoflow · CI`). The
+`desktopNotifications` setting picks which categories are sent. It defaults to `all`.
+
+| Category | When | `important` | `all` |
+|---|---|:-:|:-:|
+| Claude needs you | Claude waits for a permission or for your input | ✓ | ✓ |
+| CI | CI turned green or red on a PR, a check went red → green | ✓ | ✓ |
+| Pull request | PR opened, merged, closed without merge | ✓ | ✓ |
+| Worktree | worktree created or removed, the teardown prompt after a merge | ✓ | ✓ |
+| Failed | anything that failed: a check, an action, the provider | ✓ | ✓ |
+| Claude finished | Claude finished replying in a session (the main loop, not subagents) | | ✓ |
+| Service | a dev service came up or stopped | | ✓ |
+| Ticket | a ticket closed | | ✓ |
+| Activity | rules starting or passing, skills, the browser, pane actions | | ✓ |
+
+A rule marked `"important": true` is sent at `important` as well, the same as with toasts. If the same
+notification comes again within 5 seconds, it is sent once. Nothing needs installing:
+
+- **Windows** shows them through PowerShell, which is built in. They appear under "Windows PowerShell".
+- **macOS** shows them through `osascript`. They appear under "Script Editor". The first time, you may need
+  to allow it in System Settings → Notifications.
 
 ## Services
 

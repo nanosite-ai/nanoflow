@@ -5,6 +5,7 @@ import type { EngineInterface, Register, UiOpenResult } from 'claude-code'
 import type { NfActivity, NfCheck, NfService, NfSnapshot, NfSource, NfTab, NfTicket, NfWorktree } from '../types'
 import { ACTION, DEFAULT_CONFIG, fillTemplate, mergeConfig, starterConfig, type NfActionKey, type NfConfig } from './config'
 import { diffSnapshots, mergeLocal, ticketLabel, type NfEvent } from './diff'
+import { categoryOf, notifyArgv, notifyLevelOf, notifyTitle, shouldNotify, type NfCategory, type NfNotifyLevel, type NfOs } from './notify'
 import { statusLine } from './progress'
 import { browserEventOf, causeOf, CHECK_KINDS, matchRule, outputDetail, shortCommand, toastFor } from './rules'
 import {
@@ -44,6 +45,9 @@ const S = {
   wantsFull: false,
   providerWarned: false,
   toastLevel: 'all',
+  desktopLevel: 'all' as NfNotifyLevel,
+  /** The last desktop notification and when it went: a repeat within NOTIFY_REPEAT_MS is dropped. */
+  lastNotified: { text: '', at: 0 },
   version: undefined as string | null | undefined,
   /** The usage read in flight, and when the last one began (reads after a turn wait USAGE_GAP_MS). */
   usageReading: null as Promise<void> | null,
@@ -63,6 +67,13 @@ let isWindowsCache: boolean | undefined
 const isWindows = async ($: $): Promise<boolean> => {
   isWindowsCache ??= (await $.env.get('OS')) === 'Windows_NT'
   return isWindowsCache
+}
+
+let osCache: NfOs | undefined
+const hostOs = async ($: $): Promise<NfOs> => {
+  if (osCache) return osCache
+  if (await isWindows($)) return (osCache = 'win')
+  return (osCache = (await runText($, ['uname', '-s'])) === 'Darwin' ? 'mac' : 'linux')
 }
 
 /**
@@ -228,6 +239,34 @@ const emit = async ($: $, event: NfEvent): Promise<void> => {
   await update($, activityAtom, list => [...list, entry].slice(-ACTIVITY_LIMIT))
   const wanted = S.toastLevel === 'all' || (S.toastLevel === 'important' && (event.important || event.tone === 'error'))
   if (wanted) $.ui.toast(`${event.icon} ${event.text}${event.detail && event.tone === 'error' ? ' · full output in ⚡ Activity' : ''}`)
+  pushDesktop($, categoryOf(event), `${event.icon} ${event.text}`, event.important)
+}
+
+const NOTIFY_REPEAT_MS = 5000
+const NOTIFY_TIMEOUT_MS = 10_000
+
+/** Which session it came from: the focused worktree's ticket and name, else the folder. */
+const sessionLabel = async ($: $): Promise<string> => {
+  const snapshot = await read($, snapshotAtom)
+  const wt = snapshot?.worktrees.find(w => w.isCurrent)
+  if (wt) return wt.ticket ? `${ticketLabel(wt.ticket)} · ${wt.name}` : wt.name
+  return S.cwd ? baseName(S.cwd) : 'nanoflow'
+}
+
+/**
+ * A native notification outside the terminal (Windows toast, macOS Notification Center, notify-send), when
+ * the desktopNotifications level takes the category. Fire and forget: a failure goes to the debug log only.
+ */
+const pushDesktop = ($: $, category: NfCategory, text: string, important = false): void => {
+  if (!shouldNotify(S.desktopLevel, category, important)) return
+  void (async () => {
+    const now = await $.clock.now()
+    if (S.lastNotified.text === text && now - S.lastNotified.at < NOTIFY_REPEAT_MS) return
+    S.lastNotified = { text, at: now }
+    const argv = notifyArgv(await hostOs($), $.plugin.root, notifyTitle(category), text)
+    const { exitCode, stderr } = await runCommand($, argv, { timeoutMs: NOTIFY_TIMEOUT_MS })
+    if (exitCode !== 0) $.ui.log(`desktop notification failed (exit ${exitCode}): ${stderr.trim()}`, { to: 'debug' })
+  })().catch(error => $.ui.log(`desktop notification failed: ${String(error)}`, { to: 'debug' }))
 }
 
 // ─── config + scanning ───────────────────────────────────────────────────────────────────────────
@@ -272,7 +311,7 @@ const snapshotFor = async ($: $, full: boolean): Promise<NfSnapshot> => {
         S.providerWarned = true
         const reason = error instanceof Error ? error.message : String(error)
         await update($, sourceAtom, s => ({ ...s, error: `provider failed, using git/gh: ${reason}` }))
-        await emit($, { icon: '⚠️', text: `nanoflow provider failed (${reason}); falling back to git/gh`, tone: 'warning', important: true })
+        await emit($, { icon: '⚠️', text: `nanoflow provider failed (${reason}); falling back to git/gh`, tone: 'warning', important: true, category: 'failure' })
       }
     }
   }
@@ -499,6 +538,7 @@ const openPane = ($: $, tab?: NfTab): Promise<UiOpenResult> =>
 
 export const register: Register = (on, options) => {
   S.toastLevel = typeof options.toasts === 'string' ? options.toasts : 'all'
+  S.desktopLevel = notifyLevelOf(options.desktopNotifications)
   const openPaneOnStart = options.openPaneOnStart !== false
 
   // ─── session ─────────────────────────────────────────────────────────────────────────────────────
@@ -535,6 +575,13 @@ export const register: Register = (on, options) => {
     const ran = await next(e)
     S.cwd = e.new_cwd
     void refresh($, false)
+    return ran
+  }).catch(($, e, next) => next(e))
+
+  // Claude is waiting on the person: a permission to grant, or the prompt idle. The loudest reason to look up.
+  on('classic.Notification', async ($, e, next) => {
+    const ran = await next(e)
+    pushDesktop($, 'attention', `🔔 ${await sessionLabel($)}: ${e.message}`, true)
     return ran
   }).catch(($, e, next) => next(e))
 
@@ -591,6 +638,7 @@ export const register: Register = (on, options) => {
     S.running = inBackground ? null : rule.label
     await refreshStatus($)
     if (startText && S.toastLevel === 'all') $.ui.toast(`⏳ ${startText}`)
+    if (startText) pushDesktop($, 'activity', `⏳ ${startText}`)
     const ran = await next(e)
     S.running = null
     if (ran.deny !== undefined || inBackground) {
@@ -603,7 +651,7 @@ export const register: Register = (on, options) => {
       const before: NfCheck | undefined = checks[rule.label]
       await update($, checksAtom, all => ({ ...all, [rule.label]: { label: rule.label, ok, at: Date.now() } }))
       if (before && !before.ok && ok) {
-        await emit($, { icon: '🟢', text: `${rule.label} went red → green (${shortCommand(e.command, 40)})`, tone: 'success', important: true })
+        await emit($, { icon: '🟢', text: `${rule.label} went red → green (${shortCommand(e.command, 40)})`, tone: 'success', important: true, category: 'ci' })
       }
     }
     const text = toastFor(rule, ok ? 'ok' : 'fail')
@@ -653,6 +701,8 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
     void refreshUsage($, true)
+    // The main loop's answer only: a subagent's end, an interruption or an error is no "Claude finished".
+    if (e.agentId === undefined && e.reason === 'answer') pushDesktop($, 'turn', `✅ ${await sessionLabel($)}: done, your turn`)
     if ((await read($, skillAtom)) !== null) {
       await update($, skillAtom, () => null)
       await refreshStatus($)
