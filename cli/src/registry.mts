@@ -1,6 +1,6 @@
 // Every command registers itself here. The commander tree is the single source for --help and docs/cli.md.
 import { Command } from "commander";
-import { registerCheck, registerFlow, registerSummary } from "./commands/misc.mjs";
+import { registerCheck, registerFlow, registerSummary, registerUsage } from "./commands/misc.mjs";
 import { registerCi, registerPr, registerShots } from "./commands/pr.mjs";
 import { registerDocs, registerSetup } from "./commands/setup.mjs";
 import { registerStack } from "./commands/stack.mjs";
@@ -35,6 +35,7 @@ export const buildProgram = (): Command => {
   registerCi(program);
   registerFlow(program);
   registerSummary(program);
+  registerUsage(program);
   registerSetup(program);
   registerDocs(program);
   return program;

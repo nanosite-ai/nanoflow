@@ -1,7 +1,9 @@
 // The pane's shared building blocks: colors and the small pieces every tab repeats. Reach for these
 // before writing a Box/Text/Link by hand, and add a variant here rather than a one-off in a tab.
 import type { Elements } from 'claude-code'
+import type { NfTokens } from '../types'
 import { ticketLabel } from './diff'
+import { allTokens, formatTokens } from './usage'
 
 export type PaneElements = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button' | 'Link'> & { Input?: Elements['terminal']['Input'] }
 
@@ -33,11 +35,15 @@ export const statusColor = (status: string | null): string => {
   return COLOR.muted
 }
 
-/** A horizontal, wrapping line of parts. `indent` lines it up under a card's title. */
-export const Row = (el: PaneElements, key: string, children: Child[], opts: { gap?: number; indent?: boolean; wrap?: boolean } = {}) => {
+/**
+ * A horizontal, wrapping line of parts. `indent` lines it up under a card's title; a number nests it that
+ * many levels deep (2 columns each).
+ */
+export const Row = (el: PaneElements, key: string, children: Child[], opts: { gap?: number; indent?: boolean | number; wrap?: boolean } = {}) => {
   const { Box } = el
+  const levels = opts.indent === true ? 1 : opts.indent || 0
   return (
-    <Box key={key} flexDirection="row" gap={opts.gap ?? 1} flexWrap={opts.wrap === false ? 'nowrap' : 'wrap'} {...(opts.indent ? { paddingLeft: 2 } : {})}>
+    <Box key={key} flexDirection="row" gap={opts.gap ?? 1} flexWrap={opts.wrap === false ? 'nowrap' : 'wrap'} {...(levels ? { paddingLeft: 2 * levels } : {})}>
       {children}
     </Box>
   )
@@ -77,4 +83,24 @@ export const TicketLink = (el: PaneElements, key: string, ticket: { number: numb
 export const LinkOr = (el: PaneElements, key: string, href: string | null | undefined, label: string, color?: string) => {
   const { Link, Text } = el
   return href ? <Link key={key} href={href} label={label} /> : <Text key={key} color={color} dimColor={color === undefined}>{label}</Text>
+}
+
+/**
+ * A line of token counts: `label 🪙 37.8M · in 530 · out 210k · cache read 36.7M · cache write 881k`, the
+ * kinds dim. `extra` parts follow, e.g. a session count.
+ */
+export const Tokens = (
+  el: PaneElements, key: string, label: string | null, t: NfTokens,
+  opts: { indent?: boolean | number; bold?: boolean; color?: string; extra?: Child[] } = {},
+) => {
+  const { Text } = el
+  return Row(el, key, [
+    label !== null && <Text key={`${key}-label`} bold={opts.bold} color={opts.color}>{label}</Text>,
+    <Text key={`${key}-all`} bold={opts.bold}>{`🪙 ${formatTokens(allTokens(t))}`}</Text>,
+    <Text key={`${key}-in`} dimColor>{`in ${formatTokens(t.input)}`}</Text>,
+    <Text key={`${key}-out`} dimColor>{`out ${formatTokens(t.output)}`}</Text>,
+    <Text key={`${key}-read`} dimColor>{`cache read ${formatTokens(t.cacheRead)}`}</Text>,
+    <Text key={`${key}-write`} dimColor>{`cache write ${formatTokens(t.cacheWrite)}`}</Text>,
+    ...(opts.extra ?? []),
+  ], { indent: opts.indent })
 }

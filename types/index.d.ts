@@ -53,6 +53,18 @@ export type NfCheck = { label: string; ok: boolean; at: number }
 
 export type NfTab = 'worktrees' | 'tickets' | 'activity'
 
+/** Tokens by kind, as `nanoflow usage --json` counts them; `requests` is the API responses counted. */
+export type NfTokens = { input: number; output: number; cacheRead: number; cacheWrite: number; requests: number }
+
+/** One Claude Code session's tokens, by model (`claude-opus-5-5`), its subagents included. */
+export type NfSessionUsage = { id: string; title: string | null; startedAt: string | null; updatedAt: string; models: Record<string, NfTokens>; total: NfTokens }
+
+/** A worktree's sessions, newest first, and their sum. */
+export type NfWorktreeUsage = { name: string; path: string; branch: string | null; sessions: NfSessionUsage[]; models: Record<string, NfTokens>; total: NfTokens }
+
+/** What `nanoflow usage --json` prints: every worktree's sessions, and the sum of them all. */
+export type NfUsage = { version: 1; generatedAt: string; worktrees: NfWorktreeUsage[]; models: Record<string, NfTokens>; total: NfTokens }
+
 export type NfSource = { config: string; provider: string | null; error: string | null }
 
 export type NfSecretScope = 'project' | 'global'
@@ -93,6 +105,8 @@ declare module 'claude-code' {
       expanded: number | null
       busy: string | null
       source: NfSource
+      /** Each session's tokens per worktree, from `nanoflow usage --json`; null until read, or without the CLI. */
+      usage: NfUsage | null
       /** The worktree this session works in, from the paths its tool calls name; null until one does. */
       focus: string | null
       /** The vault's entries in reach of this session (names, lengths, allowed uses; values stay in $.store). */

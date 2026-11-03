@@ -1,10 +1,11 @@
 // The dashboard pane: Worktrees / Tickets / Activity, with links and action buttons. A tree from the
 // surface's own element table; every handler is passed in, so this file holds no state. The shared
 // pieces (Row, Badge, Mark, links) live in ./ui.
-import type { NfActivity, NfCheck, NfSnapshot, NfSource, NfTab, NfTicket, NfWorktree } from '../types'
+import type { NfActivity, NfCheck, NfSnapshot, NfSource, NfTab, NfTicket, NfUsage, NfWorktree, NfWorktreeUsage } from '../types'
 import { truncate } from './diff'
 import { stagesOf, type StageState } from './progress'
-import { Badge, COLOR, Fold, LinkOr, type Look, Mark, type PaneElements, Row, StatusBadge, TicketLink } from './ui'
+import { Badge, COLOR, Fold, LinkOr, type Look, Mark, type PaneElements, Row, StatusBadge, TicketLink, Tokens } from './ui'
+import { byModel, shortModel, usageOf } from './usage'
 
 export { COLOR, statusColor, type PaneElements } from './ui'
 
@@ -25,6 +26,10 @@ export type PaneData = {
   openService: string | null
   /** nanoflow's own version, for the footer. */
   version: string | null
+  /** Each session's tokens, from `nanoflow usage --json`; null until read, or without the CLI. */
+  usage: NfUsage | null
+  /** Paths compare without case (Windows). */
+  win: boolean
 }
 
 export type PaneHandlers = {
@@ -93,7 +98,9 @@ export const isDone = (wt: NfWorktree): boolean =>
 
 const ago = (now: number, iso: string): string => {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000))
-  return s < 60 ? `${s}s ago` : `${Math.round(s / 60)}m ago`
+  if (s < 60) return `${s}s ago`
+  if (s < 3600) return `${Math.round(s / 60)}m ago`
+  return s < 172_800 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86_400)}d ago`
 }
 
 const clock = (at: number): string => {
@@ -119,6 +126,37 @@ const Tabs = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
 const Stages = (el: PaneElements, key: string, wt: NfWorktree, checks: PaneData['checks']) =>
   Row(el, key, stagesOf(wt, checks).map(st => Mark(el, `${key}-${st.key}`, STAGE_LOOK[st.state], st.label)), { indent: true })
 
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
+
+/**
+ * A worktree's tokens: one line summed over its sessions; open, each session (newest first) with a line
+ * per model it used.
+ */
+const Usage = (el: PaneElements, data: PaneData, k: (part: string) => string, usage: NfWorktreeUsage, isOpen: boolean) => {
+  const { Box, Text } = el
+  const width = Math.max(20, data.columns - 30)
+  return (
+    <Box key={k('usage')} flexDirection="column">
+      {Tokens(el, k('usage-total'), null, usage.total, { indent: true, extra: [<Text key={k('usage-sessions')} dimColor>{`· ${plural(usage.sessions.length, 'session')}`}</Text>] })}
+      {isOpen && usage.sessions.map(s => {
+        const sk = k(`usage-${s.id}`)
+        const models = byModel(s.models)
+        return (
+          <Box key={sk} flexDirection="column">
+            {Row(el, `${sk}-head`, [
+              <Text key={`${sk}-id`} color={COLOR.info}>{`💬 ${s.id.slice(0, 8)}`}</Text>,
+              s.title && <Text key={`${sk}-title`}>{truncate(s.title, width)}</Text>,
+              <Text key={`${sk}-ago`} dimColor>{ago(data.now, s.updatedAt)}</Text>,
+            ], { indent: 2 })}
+            {models.length > 1 && Tokens(el, `${sk}-total`, 'all models', s.total, { indent: 3, bold: true })}
+            {models.map(([model, t]) => Tokens(el, `${sk}-${model}`, shortModel(model), t, { indent: 3 }))}
+          </Box>
+        )
+      })}
+    </Box>
+  )
+}
+
 const WorktreeCard = (el: PaneElements, data: PaneData, on: PaneHandlers, wt: NfWorktree) => {
   const { Box, Text, Button, Link } = el
   const width = Math.max(20, data.columns - 6)
@@ -127,6 +165,7 @@ const WorktreeCard = (el: PaneElements, data: PaneData, on: PaneHandlers, wt: Nf
   const ci = wt.pr ? CI_LOOK[wt.pr.ci] : undefined
   const pr = wt.pr ? PR_LOOK[wt.pr.state] ?? PR_LOOK.OPEN : undefined
   const done = isDone(wt)
+  const usage = usageOf(data.usage, wt.path, data.win)
   const open = wt.services.find(s => s.isUp && s.name === data.openService) ?? wt.services.find(s => s.isUp)
   const icon = wt.isMain ? '🏠' : wt.services.some(s => s.isUp) ? '🚀' : '🌿'
   const k = (part: string): string => `${part}-${wt.path}`
@@ -165,6 +204,7 @@ const WorktreeCard = (el: PaneElements, data: PaneData, on: PaneHandlers, wt: Nf
           LinkOr(el, k(`svc-${s.name}-link`), s.isUp ? s.url : null, `${s.name} :${s.port}`),
         ], { wrap: false })
       )), { gap: 2, indent: true })}
+      {usage && Usage(el, data, k, usage, isSelected)}
       {Row(el, k('path'), [
         <Text key={k('path-icon')}>📂</Text>,
         <Link key={k('path-link')} href={folderUrl(wt.path)} label={truncate(wt.path, width - 4)} />,
@@ -203,6 +243,20 @@ const Fleet = (el: PaneElements, data: PaneData, on: PaneHandlers, snapshot: NfS
   ], { gap: 2 })
 }
 
+/** Every session's tokens summed, by model when there are several, under the cards. */
+const UsageTotal = (el: PaneElements, usage: NfUsage | null) => {
+  const { Box, Text } = el
+  if (!usage || usage.total.requests === 0) return null
+  const sessions = usage.worktrees.reduce((n, u) => n + u.sessions.length, 0)
+  const models = byModel(usage.models)
+  return (
+    <Box key="usage-all" flexDirection="column" paddingX={2}>
+      {Tokens(el, 'usage-all-total', 'Σ All sessions', usage.total, { bold: true, color: COLOR.current, extra: [<Text key="usage-all-count" dimColor>{`· ${plural(sessions, 'session')}`}</Text>] })}
+      {models.length > 1 && models.map(([model, t]) => Tokens(el, `usage-all-${model}`, shortModel(model), t, { indent: true }))}
+    </Box>
+  )
+}
+
 const WorktreesTab = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
   const { Box, Text } = el
   if (!data.snapshot) return <Text dimColor>🔎 Scanning worktrees…</Text>
@@ -215,6 +269,7 @@ const WorktreesTab = (el: PaneElements, data: PaneData, on: PaneHandlers) => {
       <Box key="cards" flexDirection="column">
         {trees.map(wt => WorktreeCard(el, data, on, wt))}
       </Box>
+      {UsageTotal(el, data.usage)}
     </Box>
   )
 }

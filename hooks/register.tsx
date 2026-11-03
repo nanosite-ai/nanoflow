@@ -11,6 +11,7 @@ import {
   applyFlowResult, baseName, buildFlowQuery, focusFrom, isInside, isSnapshot, normalizePath, parseJson, parseWorktreeList, quoteForCmd, samePath, serviceUrl,
   featureOf, slugFromRemote, ticketKeyOf, ticketNumber, ticketUrl, withFocus, type GitWorktree, type GqlRepo,
 } from './scan'
+import { isUsage } from './usage'
 import { PaneView, type PaneHandlers } from './view'
 import { registerSecrets, secretCount, startSecrets } from './secrets/register'
 
@@ -32,6 +33,7 @@ const expandedAtom = atom({ plugin: 'nanoflow', key: 'expanded' } as const, null
 const busyAtom = atom({ plugin: 'nanoflow', key: 'busy' } as const, null)
 const sourceAtom = atom({ plugin: 'nanoflow', key: 'source' } as const, { config: 'defaults', provider: null, error: null })
 const focusAtom = atom({ plugin: 'nanoflow', key: 'focus' } as const, null)
+const usageAtom = atom({ plugin: 'nanoflow', key: 'usage' } as const, null)
 
 /** Module state: what the hooks share. Reset by a reload; the drawn data lives in $.state. */
 const S = {
@@ -43,6 +45,9 @@ const S = {
   providerWarned: false,
   toastLevel: 'all',
   version: undefined as string | null | undefined,
+  /** The usage read in flight, and when the last one began (reads after a turn wait USAGE_GAP_MS). */
+  usageReading: null as Promise<void> | null,
+  usageAt: 0,
 }
 
 // ─── host I/O: git, gh, the provider, liveness probes ($ cannot cross an import, so it all lives here) ──
@@ -280,6 +285,34 @@ const scan = async ($: $, full: boolean): Promise<void> => {
   await refreshStatus($)
 }
 
+/** The CLI that counts each session's tokens from the transcripts; its absence shows no usage. */
+const USAGE_ARGV = ['nanoflow', 'usage', '--json'] as const
+const USAGE_GAP_MS = 30_000
+
+/**
+ * Each session's tokens, from `nanoflow usage --json` (transcripts are often over the 4 MiB one read
+ * takes, so the CLI reads them). One read at a time; `soon` skips a read within USAGE_GAP_MS of the last.
+ */
+const refreshUsage = ($: $, soon = false): Promise<void> => {
+  if (S.usageReading) return S.usageReading
+  S.usageReading = (async () => {
+    try {
+      const now = await $.clock.now()
+      if (soon && now - S.usageAt < USAGE_GAP_MS) return
+      S.usageAt = now
+      const where = (await read($, snapshotAtom))?.mainRoot ?? S.cwd
+      const out = await runText($, [...USAGE_ARGV], where)
+      const parsed = parseJson<unknown>(out)
+      if (isUsage(parsed)) await update($, usageAtom, () => parsed)
+    } catch (error) {
+      $.ui.log(`nanoflow: usage failed: ${String(error)}`, { to: 'debug' })
+    } finally {
+      S.usageReading = null
+    }
+  })()
+  return S.usageReading
+}
+
 /** One scan at a time; a full scan asked for meanwhile runs right after. */
 const refresh = ($: $, full: boolean): Promise<void> => {
   if (S.scanning) {
@@ -289,6 +322,7 @@ const refresh = ($: $, full: boolean): Promise<void> => {
   S.scanning = (async () => {
     try {
       await scan($, full)
+      if (full) await refreshUsage($)
     } catch (error) {
       $.ui.log(`nanoflow: scan failed: ${String(error)}`, { to: 'debug' })
     } finally {
@@ -598,6 +632,7 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     const done = await next(e)
+    void refreshUsage($, true)
     if ((await read($, skillAtom)) !== null) {
       await update($, skillAtom, () => null)
       await refreshStatus($)
@@ -612,6 +647,7 @@ export const register: Register = (on, options) => {
     const source: NfSource = await read($, sourceAtom)
     const openService = S.config.services.find(s => s.open)?.name ?? null
     if (S.version === undefined) S.version = await pluginVersion($)
+    const usage = await read($, usageAtom)
     return PaneView(el, {
       snapshot: await read($, snapshotAtom),
       activity: await read($, activityAtom),
@@ -633,6 +669,9 @@ export const register: Register = (on, options) => {
       },
       openService,
       version: S.version,
+      usage,
+      // Only matched by path when there is usage to match.
+      win: usage ? await isWindows($) : false,
     }, handlers($))
   })
 
