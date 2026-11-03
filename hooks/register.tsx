@@ -6,8 +6,9 @@ import type { NfActivity, NfCheck, NfService, NfSnapshot, NfSource, NfTab, NfTic
 import { ACTION, DEFAULT_CONFIG, fillTemplate, mergeConfig, starterConfig, type NfActionKey, type NfConfig } from './config'
 import { diffSnapshots, mergeLocal, ticketLabel, worktreeTitle, type NfEvent } from './diff'
 import {
-  ATTENTION_TYPES, categoryOf, claim, desktopImportant, IDLE_AFTER_TURN_MS, notifyArgv, notifyLevelOf, notifyTitle, powershellFile, shouldNotify,
-  type NfCategory, type NfNotifyLevel, type NfOs,
+  ATTENTION_TYPES, categoryOf, claim, clickToken, desktopImportant, IDLE_AFTER_TURN_MS, launchUri, notifyArgv, notifyLevelOf, notifyTitle, powershellFile,
+  rememberClick, shouldNotify, terminalFrom, ttyPath,
+  type NfCategory, type NfClicks, type NfClickTarget, type NfMacNotifier, type NfNotifyLevel, type NfOs, type NfTerminal,
 } from './notify'
 import { statusLine } from './progress'
 import { browserEventOf, causeOf, CHECK_KINDS, matchRule, outputDetail, shortCommand, toastFor } from './rules'
@@ -57,6 +58,11 @@ const S = {
   notifierMissing: false,
   /** When "Claude finished" last went: the idle prompt that follows it says nothing new. */
   turnNotifiedAt: 0,
+  /** This session's Claude process and the terminal it draws in: what a click on a notification goes back to. */
+  pid: undefined as number | undefined,
+  terminal: undefined as NfTerminal | undefined,
+  /** Whether macOS has terminal-notifier; undefined until asked. */
+  terminalNotifier: undefined as boolean | undefined,
   version: undefined as string | null | undefined,
   /** The usage read in flight, and when the last one began (reads after a turn wait USAGE_GAP_MS). */
   usageReading: null as Promise<void> | null,
@@ -253,7 +259,8 @@ const emit = async ($: $, event: NfEvent, shared = false): Promise<void> => {
   if (shouldNotify(S.toastLevel, categoryOf(event), event.important)) {
     $.ui.toast(`${event.icon} ${event.text}${event.detail && event.tone === 'error' ? ' · full output in ⚡ Activity' : ''}`)
   }
-  pushDesktop($, categoryOf(event), `${event.icon} ${event.text}`, { important: desktopImportant(event), shared })
+  const about = event.worktree ? (await read($, snapshotAtom))?.worktrees.find(wt => wt.path === event.worktree) : undefined
+  pushDesktop($, categoryOf(event), `${event.icon} ${event.text}`, { important: desktopImportant(event), shared, about })
 }
 
 /** The same notification again this soon, from this session, is dropped. */
@@ -273,16 +280,106 @@ const sessionLabel = async ($: $): Promise<string> => {
  * the event only the first sends it. A file, as every session runs in its own process.
  */
 const claimShared = async ($: $, key: string, now: number): Promise<boolean> => {
-  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
-  if (!home) return true
-  const file = `${home.replace(/\\/g, '/')}/.claude/nanoflow/notified.json`
+  const dir = await nanoflowDir($)
+  if (!dir) return true
+  const file = `${dir}/notified.json`
   const stored = parseJson<Record<string, number>>(await $.fs.read(file).catch(() => '{}')) ?? {}
   const { isNew, recent } = claim(stored, key, now, NOTIFY_SHARED_MS)
   if (isNew) await $.fs.write(file, JSON.stringify(recent))
   return isNew
 }
 
-const sendDesktop = async ($: $, category: NfCategory, text: string, shared: boolean): Promise<void> => {
+const nanoflowDir = async ($: $): Promise<string | null> => {
+  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
+  return home ? `${home.replace(/\\/g, '/')}/.claude/nanoflow` : null
+}
+
+/** Claude's own folder: where `sessions/<pid>.json` records each running session. */
+const claudeDir = async ($: $): Promise<string | null> => {
+  const config = await $.env.get('CLAUDE_CONFIG_DIR')
+  if (config) return config.replace(/\\/g, '/')
+  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
+  return home ? `${home.replace(/\\/g, '/')}/.claude` : null
+}
+
+type LiveSession = { pid: number; sessionId: string; cwd: string }
+
+/** The running Claude sessions, from the record each keeps under sessions/ (named by its pid). */
+const liveSessions = async ($: $): Promise<LiveSession[]> => {
+  const dir = await claudeDir($)
+  if (!dir) return []
+  const entries = await $.fs.list(`${dir}/sessions`).catch(() => [])
+  const found: LiveSession[] = []
+  for (const entry of entries) {
+    if (!/^\d+\.json$/.test(entry.name)) continue
+    const record = parseJson<Partial<LiveSession>>(await $.fs.read(`${dir}/sessions/${entry.name}`).catch(() => ''))
+    if (record && typeof record.pid === 'number' && typeof record.sessionId === 'string' && typeof record.cwd === 'string') {
+      found.push({ pid: record.pid, sessionId: record.sessionId, cwd: record.cwd })
+    }
+  }
+  return found
+}
+
+/** This session's terminal, read once: the environment does not change under a running process. */
+const ownTerminal = async ($: $): Promise<NfTerminal> => {
+  S.terminal ??= terminalFrom({
+    bundle: await $.env.get('__CFBundleIdentifier'), iterm: await $.env.get('ITERM_SESSION_ID'), wt: await $.env.get('WT_SESSION'),
+  })
+  if (S.terminal.tty === undefined && S.pid && (await hostOs($)) === 'mac') {
+    const tty = ttyPath(await runText($, ['ps', '-o', 'tty=', '-p', String(S.pid)]))
+    if (tty) S.terminal = { ...S.terminal, tty }
+  }
+  return S.terminal
+}
+
+/**
+ * What a click on the notification brings up, with what is known now so the click has less to find:
+ * - about another worktree: the session running in it (its pid), else that worktree's, found by its branch;
+ * - else this session: its id, pid and terminal. The main checkout's branch names too many tabs to find one by.
+ */
+const clickTarget = async ($: $, about: NfWorktree | undefined): Promise<NfClickTarget> => {
+  const snapshot = await read($, snapshotAtom)
+  const mainRoot = snapshot?.mainRoot ?? S.cwd
+  const win = await isWindows($)
+  const branchOf = (wt: NfWorktree | undefined): { branch?: string } => (wt?.branch && !wt.isMain ? { branch: wt.branch } : {})
+  const sessions = await liveSessions($)
+  if (about && !about.isCurrent) {
+    const there = sessions.find(s => samePath(s.cwd, about.path, win))
+    return {
+      ...(there ? { sessionId: there.sessionId, pid: there.pid } : {}),
+      path: about.path, mainRoot, title: worktreeTitle(about), ...branchOf(about),
+    }
+  }
+  const sessionId = await $.session.id()
+  S.pid ??= sessions.find(s => s.sessionId === sessionId)?.pid
+  const current = snapshot?.worktrees.find(wt => wt.isCurrent)
+  const terminal = await ownTerminal($)
+  // S.cwd, where this session started: a resume has to begin there to find its transcript.
+  return {
+    sessionId, ...(S.pid ? { pid: S.pid } : {}), ...(Object.keys(terminal).length ? { terminal } : {}),
+    path: S.cwd, mainRoot, title: await sessionLabel($), ...branchOf(current),
+  }
+}
+
+/** Whether macOS has `terminal-notifier`, the one notifier a click can run something from. Asked once. */
+const macNotifier = async ($: $): Promise<NfMacNotifier> => {
+  S.terminalNotifier ??= (await runText($, ['which', 'terminal-notifier'])) !== null
+  const { app } = await ownTerminal($)
+  return { terminalNotifier: S.terminalNotifier, ...(app ? { app } : {}) }
+}
+
+/** Remembers the click target under a fresh token; the link to put on the notification, or none without a home. */
+const clickLaunch = async ($: $, about: NfWorktree | undefined, now: number): Promise<string | undefined> => {
+  const dir = await nanoflowDir($)
+  if (!dir) return undefined
+  const file = `${dir}/clicks.json`
+  const token = clickToken(Math.random)
+  const stored = parseJson<NfClicks>(await $.fs.read(file).catch(() => '{}')) ?? {}
+  await $.fs.write(file, JSON.stringify(rememberClick(stored, token, await clickTarget($, about), now)))
+  return launchUri(token)
+}
+
+const sendDesktop = async ($: $, category: NfCategory, text: string, shared: boolean, about: NfWorktree | undefined): Promise<void> => {
   const now = await $.clock.now()
   const key = `${category}:${text}`
   // Claude asking twice is two asks: never folded.
@@ -293,8 +390,17 @@ const sendDesktop = async ($: $, category: NfCategory, text: string, shared: boo
   }
   if (shared && !(await claimShared($, key, now))) return
   if (category === 'turn') S.turnNotifiedAt = now
+  const os = await hostOs($)
+  const mac = os === 'mac' ? await macNotifier($) : undefined
+  // A click opens the session from a Windows toast, or a macOS one through terminal-notifier.
+  const clickable = os === 'win' || mac?.terminalNotifier === true
+  const launch = clickable ? await clickLaunch($, about, now).catch(() => undefined) : undefined
+  const title = notifyTitle(category)
   // Straight to the program, never through cmd.exe: its %VAR% expansion would rewrite the text.
-  const { exitCode, stderr } = await $.process.run(notifyArgv(await hostOs($), $.plugin.root, notifyTitle(category), text), { timeoutMs: NOTIFY_TIMEOUT_MS })
+  const run = (argv: string[]) => $.process.run(argv, { timeoutMs: NOTIFY_TIMEOUT_MS })
+  let { exitCode, stderr } = await run(notifyArgv(os, $.plugin.root, title, text, launch, mac))
+  // An app that will not raise it (not scriptable, or not allowed yet): as osascript itself, as before.
+  if (exitCode !== 0 && mac?.app && !mac.terminalNotifier) ({ exitCode, stderr } = await run(notifyArgv(os, $.plugin.root, title, text)))
   if (exitCode !== 0) $.ui.log(`desktop notification failed (exit ${exitCode}): ${stderr.trim()}`, { to: 'debug' })
 }
 
@@ -303,10 +409,13 @@ const sendDesktop = async ($: $, category: NfCategory, text: string, shared: boo
  * the desktopNotifications level takes the category and a person is there to see it. Queued one at a time, so
  * a burst starts no pile of processes; a notifier that cannot start is not tried again this session.
  */
-const pushDesktop = ($: $, category: NfCategory, text: string, { important = false, shared = false } = {}): void => {
+const pushDesktop = (
+  $: $, category: NfCategory, text: string,
+  { important = false, shared = false, about }: { important?: boolean; shared?: boolean; about?: NfWorktree } = {},
+): void => {
   if (!S.isInteractive || S.notifierMissing || !shouldNotify(S.desktopLevel, category, important)) return
   S.notifyQueue = S.notifyQueue
-    .then(() => (S.notifierMissing ? undefined : sendDesktop($, category, text, shared)))
+    .then(() => (S.notifierMissing ? undefined : sendDesktop($, category, text, shared, about)))
     .catch(error => {
       S.notifierMissing = true
       $.ui.log(`desktop notifications off for this session, the notifier did not start: ${String(error)}`, { to: 'debug' })

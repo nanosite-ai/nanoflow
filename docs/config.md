@@ -98,6 +98,25 @@ Nothing needs installing:
 - **macOS** shows them through `osascript`. They appear under "Script Editor". The first time, you may need
   to allow it in System Settings → Notifications.
 
+### Clicking a notification brings up its session
+
+- "Claude needs you" and "Claude finished" switch to the tab of the session that sent them, even when
+  several sessions share a folder.
+- A worktree's event (CI, a PR, a service) opens the session working in that worktree.
+- A session that has ended is resumed in a new tab, in the folder it ran in.
+
+When it sends a notification, the session records where it runs: its process, and its terminal (the iTerm2
+tab, the tty, the Windows Terminal tab). It saves these in `~/.claude/nanoflow/clicks.json` under a random
+token, and the notification carries only that token, so the click goes straight back. An unknown token
+does nothing. Notifications stay clickable for a week.
+
+- **Windows**: Windows Terminal. The click opens a `nanoflow://` link, which nanoflow registers for your
+  Windows user the first time it sends a notification (no admin needed).
+- **macOS**: iTerm2 and Terminal.app. Clicks need [`terminal-notifier`](https://github.com/julienXX/terminal-notifier)
+  (`brew install terminal-notifier`), the notifier that can run something on a click. Without it,
+  notifications come from your terminal app instead of Script Editor, so a click brings your terminal
+  forward but doesn't pick the tab. In another app, such as VS Code, a click brings that app forward.
+
 ## Services
 
 ```json
