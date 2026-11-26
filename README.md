@@ -76,7 +76,8 @@ screenshots too."*
 
 Native Windows and macOS notifications, so you see them in another window: **Claude needs you**,
 **Claude finished**, CI, PRs, worktrees and failures. Each one is labeled with its category. The
-`desktopNotifications` setting sends all of them (the default), only the important ones, or none. See
+`desktopNotifications` setting sends all of them (the default), only the important ones, or none. On
+Windows and macOS, clicking one brings up the terminal tab of the session it's about. See
 [config](docs/config.md#desktop-notifications).
 
 ### 🔐 Secrets Claude uses without seeing

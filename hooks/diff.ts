@@ -2,8 +2,11 @@
 import type { NfSnapshot, NfTicket, NfTone, NfWorktree } from '../types'
 import type { NfCategory } from './notify'
 
-/** `category` picks its desktop notification's title and level; none is `activity`, an error is `failure`. */
-export type NfEvent = { icon: string; text: string; tone: NfTone; important: boolean; category?: NfCategory; href?: string; detail?: string }
+/**
+ * `category` picks its desktop notification's title and level; none is `activity`, an error is `failure`.
+ * `worktree` is the path of the worktree it is about: a click on its notification brings up that one's session.
+ */
+export type NfEvent = { icon: string; text: string; tone: NfTone; important: boolean; category?: NfCategory; href?: string; detail?: string; worktree?: string }
 
 /** `#712` for a GitHub issue, else the key (`ED-712`). */
 export const ticketLabel = (t: Pick<NfTicket, 'number' | 'key'>): string => (t.key && !/^\d+$/.test(t.key) ? t.key : `#${t.number}`)
@@ -45,45 +48,51 @@ export const diffSnapshots = (prev: NfSnapshot | null, next: NfSnapshot, browser
   const after = new Map(next.worktrees.map(wt => [wt.path, wt]))
 
   for (const wt of next.worktrees) {
-    const old = before.get(wt.path)
-    if (!old) {
-      events.push({ icon: '🌱', text: `Worktree ${wt.name} created${wt.slot !== null ? ` (slot ${wt.slot})` : ''}`, tone: 'success', important: true, category: 'worktree' })
-      continue
-    }
-    for (const svc of wt.services) {
-      const was = old.services.find(s => s.name === svc.name)
-      if (was && !was.isUp && svc.isUp) events.push({ icon: '🟢', text: `${label(wt)}: ${svc.name} is up :${svc.port}`, tone: 'success', important: false, category: 'service', href: svc.url })
-      if (was?.isUp && !svc.isUp) events.push({ icon: '⚪', text: `${label(wt)}: ${svc.name} stopped`, tone: 'info', important: false, category: 'service' })
-    }
-    if (wt.pr && !old.pr) {
-      events.push({ icon: '🔀', text: `${label(wt)}: PR #${wt.pr.number} opened`, tone: 'info', important: true, category: 'pr', href: wt.pr.url })
-    }
-    if (wt.pr && old.pr && old.pr.number === wt.pr.number) {
-      if (wt.pr.state !== old.pr.state && wt.pr.state === 'MERGED') {
-        events.push({ icon: '🎉', text: `PR #${wt.pr.number} merged: ${label(wt)}`, tone: 'success', important: true, category: 'pr', href: wt.pr.url })
-        events.push({
-          icon: '🧹',
-          text: `Tear down ${wt.name}? (deletes the dir + local branch)${browserOpen ? ' · close the browser + delete your screenshots' : ''}`,
-          tone: 'warning',
-          important: true,
-          category: 'worktree',
-        })
-      } else if (wt.pr.state !== old.pr.state && wt.pr.state === 'CLOSED') {
-        events.push({ icon: '🚫', text: `PR #${wt.pr.number} closed without merge: ${label(wt)}`, tone: 'warning', important: true, category: 'pr', href: wt.pr.url })
-      }
-      if (wt.pr.ci !== old.pr.ci && wt.pr.ci === 'pass') {
-        events.push({ icon: '✅', text: `CI green on PR #${wt.pr.number}`, tone: 'success', important: true, category: 'ci', href: wt.pr.url })
-      }
-      if (wt.pr.ci !== old.pr.ci && wt.pr.ci === 'fail') {
-        events.push({ icon: '❌', text: `CI failed on PR #${wt.pr.number}`, tone: 'error', important: true, category: 'ci', href: wt.pr.ciUrl ?? wt.pr.url })
-      }
-    }
-    if (wt.ticket?.state === 'CLOSED' && old.ticket?.state === 'OPEN') {
-      events.push({ icon: '🏁', text: `Ticket ${ticketLabel(wt.ticket)} closed`, tone: 'success', important: false, category: 'ticket', href: wt.ticket.url })
-    }
+    const first = events.length
+    worktreeEvents(wt, before.get(wt.path), browserOpen, events)
+    for (let i = first; i < events.length; i++) events[i] = { ...events[i]!, worktree: wt.path }
   }
   for (const old of prev.worktrees) {
     if (!after.has(old.path)) events.push({ icon: '🗑️', text: `Worktree ${old.name} removed`, tone: 'info', important: true, category: 'worktree' })
   }
   return events
+}
+
+/** What changed on one worktree, into `events`. */
+const worktreeEvents = (wt: NfWorktree, old: NfWorktree | undefined, browserOpen: boolean, events: NfEvent[]): void => {
+  if (!old) {
+    events.push({ icon: '🌱', text: `Worktree ${wt.name} created${wt.slot !== null ? ` (slot ${wt.slot})` : ''}`, tone: 'success', important: true, category: 'worktree' })
+    return
+  }
+  for (const svc of wt.services) {
+    const was = old.services.find(s => s.name === svc.name)
+    if (was && !was.isUp && svc.isUp) events.push({ icon: '🟢', text: `${label(wt)}: ${svc.name} is up :${svc.port}`, tone: 'success', important: false, category: 'service', href: svc.url })
+    if (was?.isUp && !svc.isUp) events.push({ icon: '⚪', text: `${label(wt)}: ${svc.name} stopped`, tone: 'info', important: false, category: 'service' })
+  }
+  if (wt.pr && !old.pr) {
+    events.push({ icon: '🔀', text: `${label(wt)}: PR #${wt.pr.number} opened`, tone: 'info', important: true, category: 'pr', href: wt.pr.url })
+  }
+  if (wt.pr && old.pr && old.pr.number === wt.pr.number) {
+    if (wt.pr.state !== old.pr.state && wt.pr.state === 'MERGED') {
+      events.push({ icon: '🎉', text: `PR #${wt.pr.number} merged: ${label(wt)}`, tone: 'success', important: true, category: 'pr', href: wt.pr.url })
+      events.push({
+        icon: '🧹',
+        text: `Tear down ${wt.name}? (deletes the dir + local branch)${browserOpen ? ' · close the browser + delete your screenshots' : ''}`,
+        tone: 'warning',
+        important: true,
+        category: 'worktree',
+      })
+    } else if (wt.pr.state !== old.pr.state && wt.pr.state === 'CLOSED') {
+      events.push({ icon: '🚫', text: `PR #${wt.pr.number} closed without merge: ${label(wt)}`, tone: 'warning', important: true, category: 'pr', href: wt.pr.url })
+    }
+    if (wt.pr.ci !== old.pr.ci && wt.pr.ci === 'pass') {
+      events.push({ icon: '✅', text: `CI green on PR #${wt.pr.number}`, tone: 'success', important: true, category: 'ci', href: wt.pr.url })
+    }
+    if (wt.pr.ci !== old.pr.ci && wt.pr.ci === 'fail') {
+      events.push({ icon: '❌', text: `CI failed on PR #${wt.pr.number}`, tone: 'error', important: true, category: 'ci', href: wt.pr.ciUrl ?? wt.pr.url })
+    }
+  }
+  if (wt.ticket?.state === 'CLOSED' && old.ticket?.state === 'OPEN') {
+    events.push({ icon: '🏁', text: `Ticket ${ticketLabel(wt.ticket)} closed`, tone: 'success', important: false, category: 'ticket', href: wt.ticket.url })
+  }
 }
