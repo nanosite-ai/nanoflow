@@ -1,7 +1,7 @@
 // Session + terminal title that follows the task: `<#712 | ED-712> · <branch> · <short> [· PR #<n>] [✓]`.
 // The Claude Code session is renamed the way `/rename` does it: a custom-title record appended to the
 // session's transcript. The terminal tab is set with an escape sequence, or on Windows by attaching to the
-// console of the Claude process. Inside herdr, its tab and pane labels are set through the herdr CLI.
+// console of the Claude process. Inside herdr, its workspace and tab are named through the herdr CLI.
 import { appendFileSync, existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fillTemplate, type FlowConfig } from "./config.mjs";
@@ -55,16 +55,29 @@ export const setTerminalTitle = (title: string): boolean => {
   return true;
 };
 
+/** How many tabs a herdr workspace holds, from `herdr workspace get`; null when herdr does not say. */
+const herdrTabCount = (herdr: string, workspaceId: string): number | null => {
+  const out = tryRun(herdr, ["workspace", "get", workspaceId]);
+  try {
+    const count = out ? JSON.parse(out)?.result?.workspace?.tab_count : undefined;
+    return typeof count === "number" ? count : null;
+  } catch {
+    return null;
+  }
+};
+
 /**
- * Inside herdr the tab and pane carry their own labels, which the terminal title does not change: name them
- * over herdr's CLI. False when not in herdr or herdr refused.
+ * Inside herdr, the workspace (the name in its sidebar) and the tab carry their own labels, which the terminal
+ * title does not change: name them over herdr's CLI. The workspace only when this is its one tab, or it would
+ * be named after one task of several. False when not in herdr or herdr refused.
  */
 export const renameHerdr = (title: string, env = process.env): boolean => {
-  if (env.HERDR_ENV !== "1" || !env.HERDR_PANE_ID) return false;
+  if (env.HERDR_ENV !== "1") return false;
   const herdr = env.HERDR_BIN_PATH || "herdr";
-  const pane = tryRun(herdr, ["pane", "rename", env.HERDR_PANE_ID, title]) !== null;
+  const ws = env.HERDR_WORKSPACE_ID;
+  const workspace = ws && herdrTabCount(herdr, ws) === 1 ? tryRun(herdr, ["workspace", "rename", ws, title]) !== null : false;
   const tab = env.HERDR_TAB_ID ? tryRun(herdr, ["tab", "rename", env.HERDR_TAB_ID, title]) !== null : false;
-  return pane || tab;
+  return workspace || tab;
 };
 
 export const applyTitles = (config: FlowConfig, title: string): void => {

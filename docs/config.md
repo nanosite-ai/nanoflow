@@ -48,7 +48,7 @@ committing anything).
 | `pr.conventional` | `true` | Refuse a PR title that isn't a Conventional Commit. |
 | `pr.ticketRef` | `"suffix"` | Where the PR title names the ticket, when it doesn't already: `"suffix"` `feat: x (#712)`, `"scope"` `feat(ED-712): x`, `"none"`. |
 | `pr.shotsBranch` | `"assets/pr-screenshots"` | Orphan branch for PR screenshots (created on first use). |
-| `title.enabled` | `true` | Rename the Claude Code session and terminal tab at each step. Inside [herdr](https://herdr.dev), its tab and pane are renamed too. |
+| `title.enabled` | `true` | Rename the Claude Code session and terminal tab at each step. Inside [herdr](https://herdr.dev), its workspace and tab are renamed too. |
 | `title.format` | `"{ref} · {branch} · {short}"` | The title. |
 | `teardown.checklist` | close the browser, delete local screenshots | Printed after every teardown, for what only the agent can do. |
 
