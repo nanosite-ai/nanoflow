@@ -233,6 +233,7 @@ Full reference: [docs/cli.md](docs/cli.md).
 | **Package managers** | npm, pnpm, yarn, bun (detected by `nf init`). |
 | **Tickets** | GitHub Issues + GitHub Projects (v2) boards, or Jira through Atlassian's `acli`, like `gh` (`ticket.tracker: "jira"`, `nf jira login`): titles, statuses, moves, comments, new tickets. PRs and CI from GitHub ([config](docs/config.md#tickets-in-jira)). |
 | **OS** | Windows, macOS, Linux. |
+| **Terminals** | Any terminal for the task title; [herdr](https://herdr.dev) too: its tab and pane are named after the task. |
 | **Your own CLI** | Already have a dev CLI? Make it print the [provider contract](docs/provider-contract.md) and the dashboard uses it instead. |
 
 ## ⚙️ Configuration

@@ -1,7 +1,7 @@
 // Session + terminal title that follows the task: `<#712 | ED-712> · <branch> · <short> [· PR #<n>] [✓]`.
 // The Claude Code session is renamed the way `/rename` does it: a custom-title record appended to the
 // session's transcript. The terminal tab is set with an escape sequence, or on Windows by attaching to the
-// console of the Claude process.
+// console of the Claude process. Inside herdr, its tab and pane labels are set through the herdr CLI.
 import { appendFileSync, existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fillTemplate, type FlowConfig } from "./config.mjs";
@@ -55,10 +55,23 @@ export const setTerminalTitle = (title: string): boolean => {
   return true;
 };
 
+/**
+ * Inside herdr the tab and pane carry their own labels, which the terminal title does not change: name them
+ * over herdr's CLI. False when not in herdr or herdr refused.
+ */
+export const renameHerdr = (title: string, env = process.env): boolean => {
+  if (env.HERDR_ENV !== "1" || !env.HERDR_PANE_ID) return false;
+  const herdr = env.HERDR_BIN_PATH || "herdr";
+  const pane = tryRun(herdr, ["pane", "rename", env.HERDR_PANE_ID, title]) !== null;
+  const tab = env.HERDR_TAB_ID ? tryRun(herdr, ["tab", "rename", env.HERDR_TAB_ID, title]) !== null : false;
+  return pane || tab;
+};
+
 export const applyTitles = (config: FlowConfig, title: string): void => {
   step(title);
   if (!config.title.enabled) return;
   const session = renameSession(title);
   setTerminalTitle(title);
+  renameHerdr(title);
   if (!session && process.env.CLAUDECODE) info(c.dim("(session not renamed: no CLAUDE_CODE_SESSION_ID)"));
 };
