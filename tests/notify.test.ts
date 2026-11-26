@@ -42,8 +42,9 @@ const MAC_SCRIPT = '# builds nanoflow.app, in a test'
 
 /** Files in memory for fs.read/write/list, keyed with forward slashes and no drive. */
 const fakeFiles = (on: On, initial: Record<string, string> = {}): Record<string, string> => {
-  // The drive letter dropped too: on a Windows host the engine makes /Users/me C:/Users/me.
-  const key = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
+  // The drive letter dropped too: on a Windows host the engine makes /Users/me C:/Users/me, and elsewhere it
+  // takes C:/Users/me for a relative path and puts its own folder in front.
+  const key = (path: string) => path.replace(/\\/g, '/').replace(/^(.*\/)?[A-Za-z]:(?=\/)/, '')
   const files: Record<string, string> = Object.fromEntries(Object.entries(initial).map(([path, text]) => [key(path), text]))
   on('fs.read', async (_$, e) => {
     if (key(e.path) in files) return { value: files[key(e.path)]! }
